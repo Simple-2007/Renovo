@@ -4,6 +4,11 @@
 
 {% block head %}
 <style>
+  .zone-note {
+    display: inline-block; margin-left: 10px; padding: 2px 8px;
+    font-size: 12px; color: var(--ink-muted);
+    border: 1px solid var(--border); border-radius: 999px;
+  }
   .head-row {
     display: flex; align-items: flex-start; justify-content: space-between;
     gap: 16px; flex-wrap: wrap; margin-bottom: 24px;
@@ -155,7 +160,8 @@
 <div class="head-row">
   <div>
     <h1>Мониторинг температуры</h1>
-    <p class="sub">{% if device %}{{ device.name }}{% else %}Устройство не подключено{% endif %}</p>
+    <p class="sub">{% if device %}{{ device.name }}{% else %}Устройство не подключено{% endif %}{% if device %}
+      <span class="zone-note" id="zone-note"></span>{% endif %}</p>
   </div>
   <span class="badge" id="status"><span class="dot"></span><span id="status-text">соединение…</span></span>
 </div>
@@ -250,9 +256,49 @@
     return Math.min(Math.max((s.value - s.warn_above) / span, 0), 1);
   }
 
-  const fmtTime = ts => new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  const fmtFull = ts => new Date(ts).toLocaleString('ru-RU',
-      { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  // Всё время на странице — по часам площадки, где стоят датчики, а не по
+  // часам того, кто смотрит. Иначе связь «полдень на месте → пик температуры»
+  // из графика не читается: наблюдатель может быть в другом поясе.
+  let siteZone = 'Europe/Rome';
+  let timeFmt = null, fullFmt = null;
+
+  function setZone(zone) {
+    if (!zone || zone === siteZone && timeFmt) return;
+    siteZone = zone || siteZone;
+    try {
+      timeFmt = new Intl.DateTimeFormat('ru-RU',
+        { timeZone: siteZone, hour: '2-digit', minute: '2-digit' });
+      fullFmt = new Intl.DateTimeFormat('ru-RU',
+        { timeZone: siteZone, day: '2-digit', month: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch (e) {
+      // Неизвестный пояс — не роняем страницу, откатываемся на UTC.
+      siteZone = 'UTC';
+      timeFmt = new Intl.DateTimeFormat('ru-RU',
+        { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' });
+      fullFmt = new Intl.DateTimeFormat('ru-RU',
+        { timeZone: 'UTC', day: '2-digit', month: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+    showZoneNote();
+  }
+
+  // Пояс обязательно подписан: время без указания зоны читается как своё
+  // местное и вводит в заблуждение.
+  function showZoneNote() {
+    const note = document.getElementById('zone-note');
+    if (!note) return;
+    let offset = '';
+    try {
+      offset = new Intl.DateTimeFormat('ru-RU', { timeZone: siteZone, timeZoneName: 'shortOffset' })
+        .formatToParts(new Date()).find(p => p.type === 'timeZoneName').value;
+    } catch (e) { /* без смещения тоже понятно */ }
+    note.textContent = `время площадки · ${siteZone}${offset ? ' · ' + offset : ''}`;
+  }
+
+  setZone('Europe/Rome');
+  const fmtTime = ts => timeFmt.format(new Date(ts));
+  const fmtFull = ts => fullFmt.format(new Date(ts));
 
   // Возраст замера словами. Устаревшее значение должно объявлять себя текстом,
   // а не только приглушённым цветом: цвет легко не заметить, и старое число
@@ -599,7 +645,7 @@
 
     el.tableHead.replaceChildren();
     const timeHead = document.createElement('th');
-    timeHead.textContent = 'Время';
+    timeHead.textContent = `Время (${siteZone})`;
     el.tableHead.appendChild(timeHead);
 
     for (const s of series) {
@@ -647,7 +693,9 @@
     try {
       const response = await fetch(`/api/v1/series?minutes=${m}`);
       if (!response.ok) throw new Error('series ' + response.status);
-      series = (await response.json()).series;
+      const payload = await response.json();
+      setZone(payload.device.timezone);
+      series = payload.series;
       buildChart();
       renderTable();
     } finally {
@@ -660,6 +708,7 @@
       const response = await fetch('/api/v1/latest');
       if (!response.ok) throw new Error('latest ' + response.status);
       const data = await response.json();
+      setZone(data.device.timezone);
       if (data.device.stale_after) staleSeconds = data.device.stale_after;
       lastSensors = data.sensors;
       renderTiles(data.sensors);

@@ -181,6 +181,7 @@ class LatestView(APIView):
                 "online": device.is_online,
                 "interval": device.report_interval_sec,
                 "stale_after": device.offline_after_sec,
+                "timezone": device.site_timezone,
             },
             "server_time": timezone.now().isoformat(),
             "sensors": sensors,
@@ -215,7 +216,12 @@ class SeriesView(APIView):
             })
 
         return Response({
-            "device": {"slug": device.slug, "name": device.name, "online": device.is_online},
+            "device": {
+                "slug": device.slug,
+                "name": device.name,
+                "online": device.is_online,
+                "timezone": device.site_timezone,
+            },
             "minutes": minutes,
             "series": series,
         })

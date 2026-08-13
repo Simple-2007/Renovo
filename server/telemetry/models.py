@@ -1,5 +1,7 @@
 import secrets
+from zoneinfo import ZoneInfo, available_timezones
 
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
@@ -21,6 +23,14 @@ class Device(models.Model):
     slug = models.SlugField("код", max_length=50, unique=True)
     api_key = models.CharField("ключ API", max_length=64, unique=True, default=generate_api_key)
     is_active = models.BooleanField("активно", default=True)
+    # Пояс места, где стоят датчики. Время на сайте показывается именно в нём,
+    # а не в поясе того, кто смотрит: смысл имеет связь температуры с местным
+    # временем суток на площадке, а не с часами наблюдателя.
+    site_timezone = models.CharField(
+        "часовой пояс площадки", max_length=64, default="Europe/Rome",
+        help_text="Где физически стоят датчики. Например Europe/Rome для Сардинии, "
+                  "Asia/Krasnoyarsk для Красноярска.",
+    )
     report_interval_sec = models.PositiveIntegerField(
         "интервал замеров, с", default=180,
         help_text="Как часто контроллер шлёт данные. По нему считается, "
@@ -36,6 +46,20 @@ class Device(models.Model):
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        if self.site_timezone not in available_timezones():
+            raise ValidationError({
+                "site_timezone": f"Неизвестный часовой пояс: {self.site_timezone}. "
+                                 f"Нужно имя вида Europe/Rome."
+            })
+
+    @property
+    def tzinfo(self) -> ZoneInfo:
+        try:
+            return ZoneInfo(self.site_timezone)
+        except Exception:
+            return ZoneInfo("UTC")
 
     @property
     def offline_after_sec(self) -> float:

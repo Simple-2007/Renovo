@@ -12,7 +12,8 @@ class SensorInline(admin.TabularInline):
 
 @admin.register(Device)
 class DeviceAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "status", "sensor_count", "last_seen_at", "is_active")
+    list_display = ("name", "slug", "status", "sensor_count", "site_timezone",
+                    "last_seen_at", "is_active")
     list_filter = ("is_active",)
     search_fields = ("name", "slug")
     prepopulated_fields = {"slug": ("name",)}
