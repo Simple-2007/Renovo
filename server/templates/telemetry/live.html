@@ -1,0 +1,713 @@
+{% extends "base.html" %}
+
+{% block title %}Мониторинг температуры — Renovo{% endblock %}
+
+{% block head %}
+<style>
+  .head-row {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 24px;
+  }
+
+  /* ── Плитки текущих значений ───────────────────────────────────────── */
+  .tiles {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+    gap: 12px; margin-bottom: 28px;
+  }
+  .tile { padding: 15px 16px 12px; }
+  .tile .tile-head { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; }
+  /* Ключ серии — короткий штрих цвета линии, как на графике. */
+  .tile .key { width: 14px; height: 2px; border-radius: 1px; flex: none; }
+  .tile .name {
+    font-size: 13px; color: var(--ink-secondary); font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tile .value {
+    font-size: 34px; font-weight: 650; line-height: 1.05; letter-spacing: -0.02em;
+    display: flex; align-items: baseline; gap: 3px;
+  }
+  .tile .unit { font-size: 15px; font-weight: 500; color: var(--ink-secondary); }
+  .tile .meta {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-top: 8px; font-size: 12px; color: var(--ink-muted);
+  }
+  .tile .delta { font-variant-numeric: tabular-nums; }
+  /* Состояние подписано словом: подкраска числа — подсказка, а не
+     единственный носитель смысла. */
+  .tile .state { font-weight: 600; }
+  .tile .spark { display: block; width: 100%; height: 26px; margin-top: 10px; }
+  .tile.no-data .value, .tile.stale .value { color: var(--ink-muted); }
+  /* Прочерк в пустой плитке набирается обычным весом: при 650 он читается
+     как жирная полоса, а не как «значения нет». */
+  .tile.no-data .num { font-weight: 400; }
+  .tile.no-data .unit { opacity: .5; }
+  .tile.no-data .spark { visibility: hidden; }
+  /* Устаревшая плитка гасит не только число: сплошная заливка сменяется
+     штриховой рамкой, чтобы состояние читалось и без цвета. */
+  .tile.stale { border-style: dashed; }
+  .tile.stale .at { font-weight: 600; }
+
+  /* ── Строка фильтров: одна, над всем, что она ограничивает ─────────── */
+  .filters {
+    display: flex; align-items: center; gap: 10px;
+    flex-wrap: wrap; margin-bottom: 14px;
+  }
+  .filters .label { font-size: 13px; color: var(--ink-muted); margin-right: 2px; }
+  /* Без overflow: hidden — иначе он срезает кольцо фокуса у крайних кнопок.
+     Скругление переносим на сами кнопки. */
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; }
+  .seg button:first-child { border-radius: 7px 0 0 7px; }
+  .seg button:last-child { border-radius: 0 7px 7px 0; }
+  .seg button {
+    font: inherit; font-size: 13px; padding: 8px 14px; cursor: pointer;
+    background: var(--surface); color: var(--ink-secondary);
+    border: 0; border-right: 1px solid var(--border);
+    transition: background-color .18s ease, color .18s ease;
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover { background: var(--hover); color: var(--ink); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+  .ghost-btn {
+    font: inherit; font-size: 13px; padding: 8px 14px; cursor: pointer;
+    background: var(--surface); color: var(--ink-secondary);
+    border: 1px solid var(--border); border-radius: 8px; margin-left: auto;
+    transition: background-color .18s ease, color .18s ease;
+  }
+  .ghost-btn:hover { background: var(--hover); color: var(--ink); }
+
+  /* ── График ────────────────────────────────────────────────────────── */
+  .chart-card { padding: 16px 18px 14px; }
+  /* Высота включает полосу подписей оси — иначе внутри карточки
+     появляется собственная прокрутка. */
+  .chart-box { height: 340px; position: relative; transition: opacity .15s; }
+  .chart-card.loading .chart-box { opacity: .45; }
+  .chart-empty {
+    display: none; position: absolute; inset: 0;
+    align-items: center; justify-content: center;
+    color: var(--ink-muted); font-size: 14px; text-align: center; padding: 20px;
+  }
+  .chart-card.no-data .chart-empty { display: flex; }
+  .chart-card.no-data canvas { visibility: hidden; }
+
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 8px 20px;
+    padding-top: 14px; margin-top: 12px; border-top: 1px solid var(--border);
+  }
+  .legend button {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: inherit; font-size: 13px; color: var(--ink-secondary);
+    background: none; border: 0; padding: 6px 2px; cursor: pointer;
+    transition: color .18s ease, opacity .18s ease;
+  }
+  .legend button:hover { color: var(--ink); }
+  .legend .key { width: 16px; height: 2px; border-radius: 1px; flex: none; }
+  .legend button.off { opacity: .4; }
+
+  /* Значение впереди, имя серии следом: серию читатель уже знает. */
+  .tip {
+    position: absolute; pointer-events: none; opacity: 0;
+    transition: opacity .12s; z-index: 5; min-width: 170px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 11px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .12);
+  }
+  .tip .tip-time { font-size: 12px; color: var(--ink-muted); margin-bottom: 6px; }
+  .tip .tip-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .tip .tip-row + .tip-row { margin-top: 3px; }
+  .tip .key { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+  .tip .tip-val { font-weight: 650; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .tip .tip-name { color: var(--ink-secondary); margin-left: auto; }
+
+  /* ── Табличный вид: те же значения без опоры на цвет ───────────────── */
+  .table-wrap { margin-top: 18px; overflow-x: auto; }
+  table.readings { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.readings th, table.readings td {
+    text-align: right; padding: 7px 12px; border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  table.readings th:first-child, table.readings td:first-child { text-align: left; }
+  table.readings thead th {
+    color: var(--ink-secondary); font-weight: 600; position: sticky; top: 0;
+    background: var(--surface);
+  }
+  table.readings tbody tr:hover { background: var(--hover); }
+  table.readings .th-key {
+    display: inline-block; width: 12px; height: 2px; border-radius: 1px;
+    margin-right: 6px; vertical-align: middle;
+  }
+
+  .empty-state { padding: 48px 24px; text-align: center; color: var(--ink-secondary); }
+  .empty-state h2 { color: var(--ink); font-size: 17px; margin-bottom: 8px; }
+
+  @media (max-width: 640px) {
+    .tiles { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 10px; }
+    .tile .value { font-size: 28px; }
+    .chart-box { height: 280px; }
+    .filters { gap: 8px; }
+    .ghost-btn { margin-left: 0; }
+    .seg { width: 100%; }
+    .seg button { flex: 1; padding: 9px 8px; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="head-row">
+  <div>
+    <h1>Мониторинг температуры</h1>
+    <p class="sub">{% if device %}{{ device.name }}{% else %}Устройство не подключено{% endif %}</p>
+  </div>
+  <span class="badge" id="status"><span class="dot"></span><span id="status-text">соединение…</span></span>
+</div>
+
+{% if device %}
+  <div class="tiles" id="tiles"></div>
+
+  <div class="filters">
+    <span class="label">Период</span>
+    <div class="seg" id="ranges" role="group" aria-label="Период истории">
+      <button type="button" data-minutes="60" aria-pressed="false">1 час</button>
+      <button type="button" data-minutes="360" aria-pressed="true">6 часов</button>
+      <button type="button" data-minutes="1440" aria-pressed="false">Сутки</button>
+      <button type="button" data-minutes="10080" aria-pressed="false">Неделя</button>
+    </div>
+    <button type="button" class="ghost-btn" id="table-toggle" aria-expanded="false">Показать таблицу</button>
+  </div>
+
+  <div class="card chart-card no-data" id="chart-card">
+    <div class="chart-box">
+      <canvas id="chart"></canvas>
+      <div class="chart-empty">Данных пока нет — ждём первую запись от контроллера</div>
+      <div class="tip" id="tip"></div>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <div class="table-wrap" id="table-wrap" hidden>
+    <table class="readings">
+      <thead><tr id="table-head"></tr></thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="card empty-state">
+    <h2>Устройств пока нет</h2>
+    <p>Заведите устройство в <a href="/admin/telemetry/device/add/">админке</a> — там же будет его ключ API,
+       который нужно прописать в шлюзе на компьютере.</p>
+  </div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if device %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+(() => {
+  const POLL_MS = 5000;
+  const MAX_TABLE_ROWS = 60;
+
+  const el = {
+    tiles: document.getElementById('tiles'),
+    status: document.getElementById('status'),
+    statusText: document.getElementById('status-text'),
+    card: document.getElementById('chart-card'),
+    legend: document.getElementById('legend'),
+    tip: document.getElementById('tip'),
+    tableWrap: document.getElementById('table-wrap'),
+    tableHead: document.getElementById('table-head'),
+    tableBody: document.getElementById('table-body'),
+    tableToggle: document.getElementById('table-toggle'),
+  };
+
+  let minutes = 360;
+  let staleSeconds = 60;
+  let chart = null;
+  let series = [];              // последний ответ /series
+  const tiles = new Map();      // key -> узлы плитки
+  const lastTs = new Map();     // key -> ISO последней точки
+  const hidden = new Set();     // серии, выключенные через легенду
+  let lastSensors = [];         // последний ответ /latest — для перерисовки при смене темы
+
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  // Цвет следует за датчиком, а не за его местом в списке: слот назначается
+  // один раз при заведении, поэтому выключение серии никого не перекрашивает.
+  const colorOf = s => s.color || css(`--series-${((s.slot - 1) % 8) + 1}`);
+  // Плавный переход между двумя цветами в sRGB. Обе крайние точки проверены
+  // на контраст, промежуточные лежат между ними и тоже проходят.
+  function mix(from, to, t) {
+    const parse = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+    const [a, b] = [parse(from), parse(to)];
+    return '#' + a.map((v, i) => Math.round(v + (b[i] - v) * t)
+      .toString(16).padStart(2, '0')).join('');
+  }
+
+  // Насколько значение продвинулось от «выше нормы» к «перегреву»: 0..1.
+  // Без обоих порогов подкраски нет — цвет без шкалы просто повторял бы число.
+  function heat(s) {
+    if (s.value === null || s.warn_above === null || s.alarm_above === null) return null;
+    const span = s.alarm_above - s.warn_above;
+    if (!(span > 0)) return null;
+    return Math.min(Math.max((s.value - s.warn_above) / span, 0), 1);
+  }
+
+  const fmtTime = ts => new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const fmtFull = ts => new Date(ts).toLocaleString('ru-RU',
+      { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  // Возраст замера словами. Устаревшее значение должно объявлять себя текстом,
+  // а не только приглушённым цветом: цвет легко не заметить, и старое число
+  // прочитается как текущее.
+  function ago(seconds) {
+    if (seconds < 90) return `${Math.round(seconds)} с назад`;
+    const minutes = seconds / 60;
+    if (minutes < 90) return `${Math.round(minutes)} мин назад`;
+    const hours = minutes / 60;
+    if (hours < 36) return `${Math.round(hours)} ч назад`;
+    return `${Math.round(hours / 24)} сут назад`;
+  }
+
+  function setStatus(state, text) {
+    el.status.className = 'badge ' + state;
+    el.statusText.textContent = text;
+  }
+
+  /* ── Плитки ──────────────────────────────────────────────────────── */
+
+  function sparkline(points, color) {
+    if (points.length < 2) return '';
+    const values = points.map(p => p.v);
+    const min = Math.min(...values), max = Math.max(...values);
+    const span = (max - min) || 1;
+    const step = 100 / (points.length - 1);
+    const d = values
+      .map((v, i) => `${i ? 'L' : 'M'}${(i * step).toFixed(2)},${(24 - ((v - min) / span) * 22).toFixed(2)}`)
+      .join(' ');
+    return `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.5"
+             stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+  }
+
+  function paintTile(tile, s) {
+    const color = colorOf(s);
+    tile.key.style.background = color;
+    const line = series.find(x => x.key === s.key);
+    tile.spark.innerHTML = line ? sparkline(line.points.slice(-40), color) : '';
+  }
+
+  function renderTiles(sensors) {
+    for (const s of sensors) {
+      let tile = tiles.get(s.key);
+      if (!tile) {
+        const root = document.createElement('div');
+        root.className = 'card tile';
+        root.innerHTML =
+          `<div class="tile-head"><span class="key"></span><span class="name"></span></div>
+           <div class="value"><span class="num">—</span><span class="unit"></span></div>
+           <div class="meta"><span class="at"></span><span class="state"></span><span class="delta"></span></div>
+           <svg class="spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true"></svg>`;
+        el.tiles.appendChild(root);
+        tile = {
+          root,
+          key: root.querySelector('.key'),
+          name: root.querySelector('.name'),
+          num: root.querySelector('.num'),
+          unit: root.querySelector('.unit'),
+          at: root.querySelector('.at'),
+          state: root.querySelector('.state'),
+          delta: root.querySelector('.delta'),
+          spark: root.querySelector('.spark'),
+        };
+        tiles.set(s.key, tile);
+      }
+
+      // Имя приходит извне — вставляем только текстом.
+      tile.name.textContent = s.label;
+      tile.name.title = s.label;
+      tile.unit.textContent = s.unit;
+      paintTile(tile, s);
+
+      if (s.value === null) {
+        tile.num.textContent = '—';
+        tile.at.textContent = 'нет данных';
+        tile.state.textContent = '';
+        tile.delta.textContent = '';
+        tile.num.style.color = '';
+        tile.root.className = 'card tile no-data';
+        continue;
+      }
+
+      const stale = s.age > staleSeconds;
+      tile.num.textContent = s.value.toFixed(1);
+
+      // Устаревшее значение не подкрашиваем: тревога по старым данным
+      // хуже её отсутствия.
+      const t = stale ? null : heat(s);
+      if (t === null || t === 0) {
+        tile.num.style.color = '';
+        tile.state.textContent = '';
+      } else {
+        tile.num.style.color = mix(css('--ink'), css('--value-hot'), t);
+        tile.state.textContent = s.value >= s.alarm_above ? 'перегрев' : 'выше нормы';
+        tile.state.style.color = mix(css('--ink-muted'), css('--value-hot'), t);
+      }
+
+      tile.at.textContent = stale ? `устарело · ${ago(s.age)}` : fmtTime(s.ts);
+      tile.at.title = fmtFull(s.ts);
+      tile.root.className = 'card tile' + (stale ? ' stale' : '');
+
+      // Изменение за выбранный период. Цветом знак не кодируем: для
+      // температуры «вверх» не означает «хорошо».
+      const line = series.find(x => x.key === s.key);
+      if (line && line.points.length > 1) {
+        const diff = s.value - line.points[0].v;
+        tile.delta.textContent = (diff >= 0 ? '+' : '−') + Math.abs(diff).toFixed(1) + ' °C';
+      } else {
+        tile.delta.textContent = '';
+      }
+    }
+  }
+
+  /* ── Плагины графика ─────────────────────────────────────────────── */
+
+  // Вертикальная нить: читатель целится в момент времени, а не в линию.
+  const crosshair = {
+    id: 'crosshair',
+    afterDatasetsDraw(c) {
+      const active = c.tooltip && c.tooltip.getActiveElements ? c.tooltip.getActiveElements() : [];
+      if (!active.length) return;
+      const x = active[0].element.x;
+      const ctx = c.ctx;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(x, c.chartArea.top);
+      ctx.lineTo(x, c.chartArea.bottom);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = css('--axis');
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
+
+  // Точка и подпись на конце линии. Подпись — тот самый «рельеф», который
+  // снимает требование по контрасту светлых слотов палитры. Если подписи
+  // сходятся, лишние опускаем: их держит легенда, а стопка подписей
+  // отрывается от линий и читается как шум.
+  const endLabels = {
+    id: 'endLabels',
+    afterDatasetsDraw(c) {
+      const ctx = c.ctx;
+      const surface = css('--surface');
+      const placed = [];
+      ctx.save();
+      ctx.font = '600 12px ' + css('--sans');
+      ctx.textBaseline = 'middle';
+
+      c.data.datasets.forEach((ds, i) => {
+        if (!c.isDatasetVisible(i)) return;
+        const meta = c.getDatasetMeta(i);
+        const point = meta.data[meta.data.length - 1];
+        if (!point) return;
+
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = ds.borderColor;
+        ctx.fill();
+        ctx.lineWidth = 2;            // кольцо цветом подложки, а не обводка
+        ctx.strokeStyle = surface;
+        ctx.stroke();
+
+        const text = ds.label;
+        const width = ctx.measureText(text).width;
+        const x = point.x + 9;
+        if (x + width > c.width - 2) return;
+        if (placed.some(y => Math.abs(y - point.y) < 14)) return;
+
+        placed.push(point.y);
+        ctx.fillStyle = css('--ink-secondary');
+        ctx.fillText(text, x, point.y);
+      });
+      ctx.restore();
+    },
+  };
+
+  /* ── Подсказка ───────────────────────────────────────────────────── */
+
+  function externalTooltip(context) {
+    const { chart: c, tooltip } = context;
+    if (tooltip.opacity === 0) { el.tip.style.opacity = 0; return; }
+
+    el.tip.replaceChildren();
+    const time = document.createElement('div');
+    time.className = 'tip-time';
+    time.textContent = fmtFull(tooltip.dataPoints[0].parsed.x);
+    el.tip.appendChild(time);
+
+    for (const point of tooltip.dataPoints) {
+      const row = document.createElement('div');
+      row.className = 'tip-row';
+
+      const key = document.createElement('span');
+      key.className = 'key';
+      key.style.background = point.dataset.borderColor;
+
+      const value = document.createElement('span');
+      value.className = 'tip-val';
+      value.textContent = point.parsed.y.toFixed(1) + ' °C';
+
+      const name = document.createElement('span');
+      name.className = 'tip-name';
+      name.textContent = point.dataset.label;
+
+      row.append(key, value, name);
+      el.tip.appendChild(row);
+    }
+
+    const box = el.tip.getBoundingClientRect();
+    let left = tooltip.caretX + 14;
+    if (left + box.width > c.width) left = tooltip.caretX - box.width - 14;
+    el.tip.style.left = Math.max(0, left) + 'px';
+    el.tip.style.top = Math.min(Math.max(tooltip.caretY - box.height / 2, 0), c.height - box.height - 8) + 'px';
+    el.tip.style.opacity = 1;
+  }
+
+  /* ── График ──────────────────────────────────────────────────────── */
+
+  function buildChart() {
+    const total = series.reduce((n, s) => n + s.points.length, 0);
+    if (!total) {
+      if (chart) { chart.destroy(); chart = null; }
+      el.card.classList.add('no-data');
+      el.legend.replaceChildren();
+      return;
+    }
+    el.card.classList.remove('no-data');
+
+    const datasets = series.map(s => ({
+      label: s.label,
+      borderColor: colorOf(s),
+      data: s.points.map(p => ({ x: new Date(p.ts).getTime(), y: p.v })),
+      borderWidth: 2,
+      pointRadius: 0,
+      pointHitRadius: 0,
+      tension: 0.25,
+      hidden: hidden.has(s.key),
+    }));
+    series.forEach(s => {
+      if (s.points.length) lastTs.set(s.key, s.points[s.points.length - 1].ts);
+    });
+
+    if (chart) chart.destroy();
+    chart = new Chart(document.getElementById('chart'), {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        layout: { padding: { right: 56, top: 10 } },   // место под концевые подписи
+        interaction: { mode: 'index', intersect: false, axis: 'x' },
+        scales: {
+          x: {
+            type: 'linear',
+            border: { color: css('--axis') },
+            grid: { color: css('--grid'), tickColor: 'transparent' },
+            ticks: {
+              color: css('--ink-muted'), maxRotation: 0, autoSkipPadding: 26,
+              font: { size: 11, family: css('--sans') },
+              callback: v => fmtTime(v),
+            },
+          },
+          y: {
+            border: { display: false },
+            grid: { color: css('--grid'), tickColor: 'transparent' },
+            ticks: {
+              color: css('--ink-muted'), padding: 8,
+              font: { size: 11, family: css('--sans') },
+              callback: v => v + ' °C',
+            },
+          },
+        },
+        plugins: {
+          legend: { display: false },     // своя легенда: штрихи вместо квадратов
+          tooltip: { enabled: false, external: externalTooltip },
+        },
+      },
+      plugins: [crosshair, endLabels],
+    });
+
+    renderLegend();
+  }
+
+  function renderLegend() {
+    el.legend.replaceChildren();
+    if (series.length < 2) return;       // одна серия — её называет заголовок
+
+    series.forEach((s, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      const off = hidden.has(s.key);
+      button.className = off ? 'off' : '';
+      button.setAttribute('aria-pressed', String(!off));
+
+      const key = document.createElement('span');
+      key.className = 'key';
+      key.style.background = off ? css('--ink-muted') : colorOf(s);
+
+      const name = document.createElement('span');
+      name.textContent = s.label;
+
+      button.append(key, name);
+      button.addEventListener('click', () => {
+        if (hidden.has(s.key)) hidden.delete(s.key); else hidden.add(s.key);
+        chart.setDatasetVisibility(index, !hidden.has(s.key));
+        chart.update();
+        renderLegend();
+      });
+      el.legend.appendChild(button);
+    });
+  }
+
+  function appendPoints(sensors) {
+    if (!chart) return;
+    const cutoff = Date.now() - minutes * 60 * 1000;
+    let changed = false;
+
+    for (const s of sensors) {
+      if (s.value === null || s.ts === lastTs.get(s.key)) continue;
+      const index = series.findIndex(x => x.key === s.key);
+      if (index === -1) { loadSeries(minutes); return; }   // появился новый датчик
+      series[index].points.push({ ts: s.ts, v: s.value });
+      chart.data.datasets[index].data.push({ x: new Date(s.ts).getTime(), y: s.value });
+      lastTs.set(s.key, s.ts);
+      changed = true;
+    }
+    if (!changed) return;
+
+    for (const line of series) {
+      while (line.points.length && new Date(line.points[0].ts).getTime() < cutoff) line.points.shift();
+    }
+    chart.data.datasets.forEach(ds => {
+      while (ds.data.length && ds.data[0].x < cutoff) ds.data.shift();
+    });
+    chart.update('none');
+    renderTable();
+  }
+
+  /* ── Таблица ─────────────────────────────────────────────────────── */
+
+  function renderTable() {
+    if (el.tableWrap.hidden) return;
+
+    el.tableHead.replaceChildren();
+    const timeHead = document.createElement('th');
+    timeHead.textContent = 'Время';
+    el.tableHead.appendChild(timeHead);
+
+    for (const s of series) {
+      const th = document.createElement('th');
+      const key = document.createElement('span');
+      key.className = 'th-key';
+      key.style.background = colorOf(s);
+      th.append(key, document.createTextNode(`${s.label}, ${s.unit}`));
+      el.tableHead.appendChild(th);
+    }
+
+    // Строки собираем по меткам времени: у всех датчиков они общие,
+    // потому что приходят одним пакетом.
+    const rows = new Map();
+    series.forEach((s, column) => {
+      for (const point of s.points) {
+        if (!rows.has(point.ts)) rows.set(point.ts, new Array(series.length).fill(null));
+        rows.get(point.ts)[column] = point.v;
+      }
+    });
+
+    const sorted = [...rows.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .slice(0, MAX_TABLE_ROWS);
+
+    el.tableBody.replaceChildren();
+    for (const [ts, values] of sorted) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.textContent = fmtFull(ts);
+      tr.appendChild(td);
+      for (const value of values) {
+        const cell = document.createElement('td');
+        cell.textContent = value === null ? '—' : value.toFixed(2);
+        tr.appendChild(cell);
+      }
+      el.tableBody.appendChild(tr);
+    }
+  }
+
+  /* ── Загрузка ────────────────────────────────────────────────────── */
+
+  async function loadSeries(m) {
+    el.card.classList.add('loading');   // держим прежний кадр, без скелета
+    try {
+      const response = await fetch(`/api/v1/series?minutes=${m}`);
+      if (!response.ok) throw new Error('series ' + response.status);
+      series = (await response.json()).series;
+      buildChart();
+      renderTable();
+    } finally {
+      el.card.classList.remove('loading');
+    }
+  }
+
+  async function poll() {
+    try {
+      const response = await fetch('/api/v1/latest');
+      if (!response.ok) throw new Error('latest ' + response.status);
+      const data = await response.json();
+      if (data.device.stale_after) staleSeconds = data.device.stale_after;
+      lastSensors = data.sensors;
+      renderTiles(data.sensors);
+      if (!chart && data.sensors.some(s => s.value !== null)) {
+        loadSeries(minutes).catch(() => {});
+      }
+      appendPoints(data.sensors);
+      setStatus(data.device.online ? 'online' : 'offline',
+                data.device.online ? 'контроллер на связи' : 'нет данных от контроллера');
+    } catch (e) {
+      setStatus('offline', 'сервер недоступен');
+    }
+  }
+
+  document.getElementById('ranges').addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    for (const b of event.currentTarget.querySelectorAll('button')) {
+      b.setAttribute('aria-pressed', String(b === button));
+    }
+    minutes = Number(button.dataset.minutes);
+    loadSeries(minutes).catch(() => setStatus('offline', 'сервер недоступен'));
+  });
+
+  el.tableToggle.addEventListener('click', () => {
+    const show = el.tableWrap.hidden;
+    el.tableWrap.hidden = !show;
+    el.tableToggle.setAttribute('aria-expanded', String(show));
+    el.tableToggle.textContent = show ? 'Скрыть таблицу' : 'Показать таблицу';
+    if (show) renderTable();
+  });
+
+  // Цвета живут в канве, поэтому смену темы график сам не заметит.
+  window.addEventListener('renovo:themechange', () => {
+    buildChart();
+    renderTable();
+    lastSensors.forEach(s => { /* пересчёт подкраски под новую тему */ });
+    if (lastSensors.length) renderTiles(lastSensors);
+    for (const [key, tile] of tiles) {
+      const s = series.find(x => x.key === key);
+      if (s) paintTile(tile, s);
+    }
+  });
+
+  loadSeries(minutes).catch(() => setStatus('offline', 'сервер недоступен'));
+  poll();
+  setInterval(poll, POLL_MS);
+})();
+</script>
+{% endif %}
+{% endblock %}

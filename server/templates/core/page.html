@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} — Renovo{% endblock %}
+
+{% block content %}
+<h1>{{ page.title }}</h1>
+{% if page.lead %}<p class="sub">{{ page.lead }}</p>{% endif %}
+<div class="card">{{ page.body|safe }}</div>
+{% endblock %}

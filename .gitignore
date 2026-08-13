@@ -1,0 +1,32 @@
+# Настройки с секретами — в репозиторий не попадают.
+# Образцы лежат рядом: gateway/.env.example, server/.env.example
+.env
+.env.*
+!.env.example
+
+# Собранный шлюз и всё, что порождает PyInstaller
+gateway/build/
+gateway/dist/
+gateway/release/renovo-gateway.exe
+*.spec
+*.exe
+*.zip
+*.rar
+
+# Артефакты сборки Arduino IDE
+**/build/
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Django: собирается и наполняется на сервере
+server/staticfiles/
+server/media/
+db.sqlite3
+
+# Системное
+.DS_Store
+Thumbs.db

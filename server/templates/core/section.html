@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} — Renovo{% endblock %}
+
+{% block content %}
+<h1>{{ section.title }}</h1>
+{% if pages %}
+  <ul>
+    {% for page in pages %}
+      <li><a href="{{ page.get_absolute_url }}">{{ page.title }}</a>
+        {% if page.lead %}<span class="sub"> — {{ page.lead }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="sub">В этом разделе пока нет страниц.</p>
+{% endif %}
+{% endblock %}
