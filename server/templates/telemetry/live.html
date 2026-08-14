@@ -141,6 +141,26 @@
     margin-right: 6px; vertical-align: middle;
   }
 
+  /* Пагинация: сколько записей видно, где мы в истории и куда шагать. */
+  .pager {
+    display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap;
+    padding: 12px 2px 2px; font-size: 13px; color: var(--ink-muted);
+  }
+  .pager .count { margin-right: auto; font-variant-numeric: tabular-nums; }
+  .pager .label { color: var(--ink-muted); }
+  .pager .seg button { padding: 6px 12px; }
+  .pager-nav { display: inline-flex; align-items: center; gap: 8px; }
+  .pager-nav .page-of { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .page-btn {
+    font: inherit; font-size: 13px; padding: 6px 12px; cursor: pointer;
+    background: var(--surface); color: var(--ink-secondary);
+    border: 1px solid var(--border); border-radius: 8px;
+    transition: background-color .18s ease, color .18s ease;
+  }
+  .page-btn:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+  /* Недоступный шаг гасим, но оставляем на месте: кнопки не должны прыгать. */
+  .page-btn:disabled { opacity: .45; cursor: default; }
+
   .empty-state { padding: 48px 24px; text-align: center; color: var(--ink-secondary); }
   .empty-state h2 { color: var(--ink); font-size: 17px; margin-bottom: 8px; }
 
@@ -152,6 +172,8 @@
     .ghost-btn { margin-left: 0; }
     .seg { width: 100%; }
     .seg button { flex: 1; padding: 9px 8px; }
+    .pager .count { width: 100%; margin-right: 0; }
+    .pager-nav { margin-left: auto; }
   }
 </style>
 {% endblock %}
@@ -189,11 +211,27 @@
     <div class="legend" id="legend"></div>
   </div>
 
-  <div class="table-wrap" id="table-wrap" hidden>
-    <table class="readings">
-      <thead><tr id="table-head"></tr></thead>
-      <tbody id="table-body"></tbody>
-    </table>
+  <div id="table-wrap" hidden>
+    <div class="table-wrap">
+      <table class="readings">
+        <thead><tr id="table-head"></tr></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span class="count" id="page-count" aria-live="polite"></span>
+      <span class="label">На странице</span>
+      <div class="seg" id="page-sizes" role="group" aria-label="Записей на странице">
+        <button type="button" data-size="25" aria-pressed="true">25</button>
+        <button type="button" data-size="50" aria-pressed="false">50</button>
+        <button type="button" data-size="100" aria-pressed="false">100</button>
+      </div>
+      <div class="pager-nav">
+        <button type="button" class="page-btn" id="page-prev">← Новее</button>
+        <span class="page-of" id="page-of"></span>
+        <button type="button" class="page-btn" id="page-next">Старее →</button>
+      </div>
+    </div>
   </div>
 {% else %}
   <div class="card empty-state">
@@ -210,7 +248,7 @@
 <script>
 (() => {
   const POLL_MS = 5000;
-  const MAX_TABLE_ROWS = 60;
+  const PAGE_SIZES = [25, 50, 100];
 
   const el = {
     tiles: document.getElementById('tiles'),
@@ -223,6 +261,11 @@
     tableHead: document.getElementById('table-head'),
     tableBody: document.getElementById('table-body'),
     tableToggle: document.getElementById('table-toggle'),
+    pageSizes: document.getElementById('page-sizes'),
+    pageCount: document.getElementById('page-count'),
+    pageOf: document.getElementById('page-of'),
+    pagePrev: document.getElementById('page-prev'),
+    pageNext: document.getElementById('page-next'),
   };
 
   let minutes = 360;
@@ -233,6 +276,9 @@
   const lastTs = new Map();     // key -> ISO последней точки
   const hidden = new Set();     // серии, выключенные через легенду
   let lastSensors = [];         // последний ответ /latest — для перерисовки при смене темы
+  let pageSize = PAGE_SIZES[0]; // записей в таблице на страницу
+  let page = 0;                 // номер страницы, 0 — самые свежие записи
+  let anchorTs = null;          // метка времени первой строки страницы (см. renderTable)
 
   const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   // Цвет следует за датчиком, а не за его местом в списке: слот назначается
@@ -667,12 +713,31 @@
       }
     });
 
-    const sorted = [...rows.entries()]
-      .sort((a, b) => b[0].localeCompare(a[0]))
-      .slice(0, MAX_TABLE_ROWS);
+    const sorted = [...rows.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+
+    // Замеры приходят каждые несколько секунд и сдвигают нумерацию строк.
+    // Пока читатель не на первой странице, держимся за метку времени верхней
+    // строки, а не за её номер, — иначе страница уезжает под руками.
+    if (anchorTs !== null) {
+      const index = sorted.findIndex(([ts]) => ts === anchorTs);
+      if (index !== -1) page = Math.floor(index / pageSize);
+    }
+    const pages = Math.max(1, Math.ceil(sorted.length / pageSize));
+    page = Math.min(Math.max(page, 0), pages - 1);
+
+    const from = page * pageSize;
+    const shown = sorted.slice(from, from + pageSize);
+    anchorTs = page === 0 || !shown.length ? null : shown[0][0];
+
+    el.pageCount.textContent = sorted.length
+      ? `Записи ${from + 1}–${from + shown.length} из ${sorted.length}`
+      : 'Записей за выбранный период нет';
+    el.pageOf.textContent = `${page + 1} / ${pages}`;
+    el.pagePrev.disabled = page === 0;
+    el.pageNext.disabled = page >= pages - 1;
 
     el.tableBody.replaceChildren();
-    for (const [ts, values] of sorted) {
+    for (const [ts, values] of shown) {
       const tr = document.createElement('tr');
       const td = document.createElement('td');
       td.textContent = fmtFull(ts);
@@ -730,7 +795,34 @@
       b.setAttribute('aria-pressed', String(b === button));
     }
     minutes = Number(button.dataset.minutes);
+    // Другой период — другая история: возвращаемся к самым свежим записям.
+    page = 0;
+    anchorTs = null;
     loadSeries(minutes).catch(() => setStatus('offline', 'сервер недоступен'));
+  });
+
+  el.pageSizes.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    for (const b of event.currentTarget.querySelectorAll('button')) {
+      b.setAttribute('aria-pressed', String(b === button));
+    }
+    // Якорь оставляем: после смены размера страницы верхняя строка остаётся
+    // на виду, читатель не теряет место в истории.
+    pageSize = Number(button.dataset.size);
+    renderTable();
+  });
+
+  el.pagePrev.addEventListener('click', () => {
+    anchorTs = null;
+    page = Math.max(page - 1, 0);
+    renderTable();
+  });
+
+  el.pageNext.addEventListener('click', () => {
+    anchorTs = null;
+    page += 1;                    // верхнюю границу ставит сама renderTable
+    renderTable();
   });
 
   el.tableToggle.addEventListener('click', () => {
