@@ -65,9 +65,10 @@
      единственный носитель смысла. */
   .tile .state { font-weight: 600; }
   /* Разброс за показанный период — подпись к спарклайну, стоит прямо над ним.
-     Края разведены по температуре: холодный край синим, жаркий красным. */
-  .tile .range .lo { color: var(--value-cold); }
-  .tile .range .hi { color: var(--value-hot); }
+     Края разведены по температуре: холодный синим, жаркий красным, но
+     вполголоса — это дополнение к текущему значению, а не оно само. */
+  .tile .range .lo { color: var(--range-cold); }
+  .tile .range .hi { color: var(--range-hot); }
   .tile .range {
     margin-top: 5px; font-size: 12px; color: var(--ink-muted);
     font-variant-numeric: tabular-nums; white-space: nowrap;
