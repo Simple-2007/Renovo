@@ -63,8 +63,10 @@ class DeviceAdmin(admin.ModelAdmin):
 
 @admin.register(Sensor)
 class SensorAdmin(DragOrderMixin, admin.ModelAdmin):
-    list_display = ("name", "reorder_handle", "device", "key", "unit", "swatch",
+    list_display = ("reorder_handle", "name", "device", "key", "unit", "swatch",
                     "order", "warn_above", "alarm_above", "is_active")
+    # Ручка идёт первой колонкой, но ссылкой на датчик остаётся название:
+    # иначе Django сделал бы ссылкой первую колонку, то есть саму ручку.
     list_display_links = ("name",)
     list_filter = ("device", "is_active")
     search_fields = ("key", "label")
