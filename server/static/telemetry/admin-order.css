@@ -1,0 +1,58 @@
+/* Ручка перетаскивания строк в админке. Цвета берём из переменных админки,
+   чтобы ручка не выпадала из тёмной темы Django. */
+.row-grip {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 6px;
+  padding: 2px;
+  cursor: grab;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--body-quiet-color, #666);
+  touch-action: none;   /* иначе палец на ручке прокручивает страницу */
+}
+.row-grip:hover {
+  color: var(--body-fg, #333);
+  background: var(--darkened-bg, #f0f0f0);
+}
+.row-grip:active { cursor: grabbing; }
+.row-grip svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+/* Ручка и флажок выбора живут в одной ячейке — держим их в строку,
+   иначе узкая колонка переносит ручку на отдельный ряд. */
+#result_list td.action-checkbox, #result_list th.action-checkbox {
+  white-space: nowrap;
+}
+#result_list td.action-checkbox .action-select,
+#result_list th.action-checkbox .action-select {
+  vertical-align: middle;
+}
+
+/* В инлайне подпись строки Django позиционирует абсолютно, и она ложится
+   поверх ручки: клик уходил в подпись. Ручку поднимаем над ней, подпись
+   сдвигаем вправо на её ширину. */
+.inline-group .row-grip { position: relative; z-index: 2; }
+.inline-group td.original p { left: 24px; }
+
+tr.dragging > td, tr.dragging > th {
+  opacity: .55;
+  background: var(--darkened-bg, #f0f0f0);
+}
+body.dragging-row { user-select: none; cursor: grabbing; }
+
+.drag-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--body-quiet-color, #666);
+}
+/* После перестановки напоминаем, что правка ещё не сохранена. */
+.drag-hint.reordered {
+  font-weight: 600;
+  color: var(--body-fg, #333);
+}

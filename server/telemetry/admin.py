@@ -4,6 +4,15 @@ from django.utils.html import format_html
 from .models import Device, Reading, Sensor
 
 
+# Перетаскивание строк расставляет номера в поле «порядок», а сохраняет
+# пользователь обычной кнопкой формы: своего эндпоинта для порядка нет,
+# и незасохранённая перестановка просто пропадает при уходе со страницы.
+class DragOrderMedia:
+    class Media:
+        css = {"all": ("telemetry/admin-order.css",)}
+        js = ("telemetry/admin-order.js",)
+
+
 class SensorInline(admin.TabularInline):
     model = Sensor
     extra = 0
@@ -11,7 +20,7 @@ class SensorInline(admin.TabularInline):
 
 
 @admin.register(Device)
-class DeviceAdmin(admin.ModelAdmin):
+class DeviceAdmin(DragOrderMedia, admin.ModelAdmin):
     list_display = ("name", "slug", "status", "sensor_count", "site_timezone",
                     "last_seen_at", "is_active")
     list_filter = ("is_active",)
@@ -31,7 +40,7 @@ class DeviceAdmin(admin.ModelAdmin):
 
 
 @admin.register(Sensor)
-class SensorAdmin(admin.ModelAdmin):
+class SensorAdmin(DragOrderMedia, admin.ModelAdmin):
     list_display = ("display_name", "device", "key", "unit", "swatch", "order",
                     "warn_above", "alarm_above", "is_active")
     list_filter = ("device", "is_active")
