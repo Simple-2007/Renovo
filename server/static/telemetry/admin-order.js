@@ -7,16 +7,12 @@
 (() => {
   'use strict';
 
-  const GRIP = '<svg viewBox="0 0 16 16" aria-hidden="true">' +
-    '<circle cx="6" cy="4" r="1.4"/><circle cx="10" cy="4" r="1.4"/>' +
-    '<circle cx="6" cy="8" r="1.4"/><circle cx="10" cy="8" r="1.4"/>' +
-    '<circle cx="6" cy="12" r="1.4"/><circle cx="10" cy="12" r="1.4"/></svg>';
-
   const orderInput = row => row.querySelector('input[name$="-order"]');
 
   function init(tbody, groupOf, hintText, anchor) {
+    // Ручку рисует сервер отдельной колонкой — здесь только оживляем её.
     const rows = [...tbody.rows].filter(row =>
-      orderInput(row) && !row.classList.contains('empty-form'));
+      orderInput(row) && row.querySelector('.row-grip') && !row.classList.contains('empty-form'));
     // Меньше двух переставляемых строк — переставлять нечего, и подсказку
     // показывать не за что: в списке устройств порядка нет вовсе.
     if (rows.length < 2) return;
@@ -70,14 +66,7 @@
     const markDirty = () => hint.classList.add('reordered');
 
     for (const row of rows) {
-      const cell = row.cells[0];
-      const grip = document.createElement('button');
-      grip.type = 'button';
-      grip.className = 'row-grip';
-      grip.innerHTML = GRIP;
-      grip.setAttribute('aria-label', 'Переставить строку');
-      grip.title = 'Перетащите за ручку или переставьте стрелками ↑ ↓';
-      cell.insertBefore(grip, cell.firstChild);
+      const grip = row.querySelector('.row-grip');
 
       grip.addEventListener('pointerdown', event => {
         if (event.pointerType === 'mouse' && event.button !== 0) return;

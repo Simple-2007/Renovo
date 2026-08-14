@@ -1,26 +1,48 @@
 from django.contrib import admin
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 
 from .models import Device, Reading, Sensor
+
+
+# Ручка перетаскивания. Отдаём её отдельной колонкой, а не подсаживаем
+# скриптом в чужую ячейку: в инлайне первая ячейка занята подписью строки,
+# которую Django позиционирует абсолютно, и ручка с подписью налезали друг
+# на друга.
+GRIP_HTML = (
+    '<button type="button" class="row-grip" aria-label="Переставить строку"'
+    ' title="Перетащите за ручку или переставьте стрелками">'
+    '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    '<circle cx="6" cy="4" r="1.4"/><circle cx="10" cy="4" r="1.4"/>'
+    '<circle cx="6" cy="8" r="1.4"/><circle cx="10" cy="8" r="1.4"/>'
+    '<circle cx="6" cy="12" r="1.4"/><circle cx="10" cy="12" r="1.4"/>'
+    "</svg></button>"
+)
 
 
 # Перетаскивание строк расставляет номера в поле «порядок», а сохраняет
 # пользователь обычной кнопкой формы: своего эндпоинта для порядка нет,
 # и незасохранённая перестановка просто пропадает при уходе со страницы.
-class DragOrderMedia:
+class DragOrderMixin:
+    @admin.display(description="")
+    def reorder_handle(self, obj=None):
+        return mark_safe(GRIP_HTML)
+
     class Media:
         css = {"all": ("telemetry/admin-order.css",)}
         js = ("telemetry/admin-order.js",)
 
 
-class SensorInline(admin.TabularInline):
+class SensorInline(DragOrderMixin, admin.TabularInline):
     model = Sensor
     extra = 0
-    fields = ("key", "label", "unit", "color", "order", "warn_above", "alarm_above", "is_active")
+    fields = ("reorder_handle", "key", "label", "unit", "color", "order",
+              "warn_above", "alarm_above", "is_active")
+    readonly_fields = ("reorder_handle",)
 
 
 @admin.register(Device)
-class DeviceAdmin(DragOrderMedia, admin.ModelAdmin):
+class DeviceAdmin(admin.ModelAdmin):
     list_display = ("name", "slug", "status", "sensor_count", "site_timezone",
                     "last_seen_at", "is_active")
     list_filter = ("is_active",)
@@ -40,12 +62,19 @@ class DeviceAdmin(DragOrderMedia, admin.ModelAdmin):
 
 
 @admin.register(Sensor)
-class SensorAdmin(DragOrderMedia, admin.ModelAdmin):
-    list_display = ("display_name", "device", "key", "unit", "swatch", "order",
-                    "warn_above", "alarm_above", "is_active")
+class SensorAdmin(DragOrderMixin, admin.ModelAdmin):
+    list_display = ("name", "reorder_handle", "device", "key", "unit", "swatch",
+                    "order", "warn_above", "alarm_above", "is_active")
+    list_display_links = ("name",)
     list_filter = ("device", "is_active")
     search_fields = ("key", "label")
     list_editable = ("order", "warn_above", "alarm_above", "is_active")
+
+    # Заголовок колонки берётся из имени property, и в списке значилось
+    # «DISPLAY NAME» — подписываем по-русски.
+    @admin.display(description="название", ordering="label")
+    def name(self, obj):
+        return obj.display_name
 
     @admin.display(description="цвет")
     def swatch(self, obj):

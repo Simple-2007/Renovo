@@ -24,21 +24,12 @@
   fill: currentColor;
 }
 
-/* Ручка и флажок выбора живут в одной ячейке — держим их в строку,
-   иначе узкая колонка переносит ручку на отдельный ряд. */
-#result_list td.action-checkbox, #result_list th.action-checkbox {
-  white-space: nowrap;
+/* Своя колонка — узкая: в ней только ручка. */
+#result_list td.field-reorder_handle, .inline-group td.field-reorder_handle {
+  width: 1%;
+  padding-right: 4px;
+  text-align: center;
 }
-#result_list td.action-checkbox .action-select,
-#result_list th.action-checkbox .action-select {
-  vertical-align: middle;
-}
-
-/* В инлайне подпись строки Django позиционирует абсолютно, и она ложится
-   поверх ручки: клик уходил в подпись. Ручку поднимаем над ней, подпись
-   сдвигаем вправо на её ширину. */
-.inline-group .row-grip { position: relative; z-index: 2; }
-.inline-group td.original p { left: 24px; }
 
 tr.dragging > td, tr.dragging > th {
   opacity: .55;
