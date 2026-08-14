@@ -24,7 +24,15 @@
 
   /* Карточку берут за любое место — отдельной ручки нет. Курсор
      показывает это только тем, кому перестановка разрешена. */
-  .tiles.can-reorder .tile { cursor: grab; }
+  .tiles.can-reorder .tile {
+    cursor: grab;
+    /* Пока курсор не прошёл порог, браузер успевает начать выделение
+       текста, и вместо переноса получается выделенная карточка. */
+    user-select: none; -webkit-user-select: none;
+    /* Палец по карточке должен прокручивать страницу; перенос начинается
+       с удержания, поэтому забирать себе весь жест нельзя. */
+    touch-action: pan-y;
+  }
   .tiles.can-reorder .tile:active { cursor: grabbing; }
 
   .tile .value {
@@ -660,6 +668,11 @@
     node.addEventListener('pointerdown', event => {
       if (!canReorder) return;                 // порядок общий, менять его не всем
       if (event.pointerType === 'mouse' && event.button !== 0) return;
+      // Гасим родное поведение мыши: перенос выделения и картинок. Фокус
+      // при этом не ставим — программный фокус Chrome считает клавиатурным
+      // и рисует рамку на каждый клик. С клавиатуры карточка получает его
+      // табом, там рамка и уместна.
+      if (event.pointerType === 'mouse') event.preventDefault();
       drag = {
         tile: node, pointerId: event.pointerId,
         x: event.clientX, y: event.clientY, started: false, timer: 0,
