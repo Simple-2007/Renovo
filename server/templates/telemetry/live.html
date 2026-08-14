@@ -35,6 +35,22 @@
   }
   .tiles.can-reorder .tile:active { cursor: grabbing; }
 
+  /* Карточка в переносе остаётся на месте и гаснет — видно, откуда её
+     взяли. Карточка, с которой она поменяется местами, подсвечена снизу. */
+  .tile.dragging { opacity: .3; }
+  .tile.drop-target {
+    box-shadow: 0 10px 22px -8px var(--focus), 0 2px 0 0 var(--focus);
+    transition: box-shadow .14s ease;
+  }
+  /* Копия под курсором: приподнята тенью и чуть увеличена — «в руке». */
+  .tile-ghost {
+    position: fixed; left: 0; top: 0; margin: 0; z-index: 40;
+    pointer-events: none; will-change: transform;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, .22);
+    outline: 2px solid var(--focus); outline-offset: -1px;
+  }
+  body.dragging-tile { user-select: none; cursor: grabbing; }
+
   .tile .value {
     font-size: 34px; font-weight: 650; line-height: 1.05; letter-spacing: -0.02em;
     display: flex; align-items: baseline; gap: 3px;
@@ -556,59 +572,75 @@
 
   let drag = null;   // { tile, pointerId, x, y, started, timer }
 
+  /* Перенос карточек устроен как канбан в service-crm: во время движения
+     сетка не перестраивается. Карточка остаётся на месте, за курсором едет
+     её копия, а место будущей вставки показывает пустая рамка. Настоящая
+     перестановка происходит один раз — когда карточку отпустили.
+
+     Прежний вариант переставлял узлы на каждом движении указателя: сетка
+     ехала под курсором, цель считалась уже по новому расположению, и
+     карточка прыгала не туда, куда целились. */
+
   const ghostAt = (x, y, scale) => `translate(${x}px, ${y}px) scale(${scale})`;
 
   function startDrag() {
+    const tile = drag.tile;
+    const box = tile.getBoundingClientRect();
     drag.started = true;
-    const box = drag.tile.getBoundingClientRect();
     drag.grab = { x: drag.x - box.left, y: drag.y - box.top };
 
-    // Копию несём за курсором, оригинал остаётся в сетке пустым местом:
-    // вынимать саму карточку из потока нельзя — сетка тут же схлопнется.
-    const ghost = drag.tile.cloneNode(true);
+    // Копия под курсором. Сетка при этом не меняется вовсе: карточка
+    // остаётся на своём месте приглушённой, и ничего не «уезжает» под рукой.
+    const ghost = tile.cloneNode(true);
     ghost.classList.add('tile-ghost');
-    ghost.classList.remove('dragging');
+    ghost.classList.remove('dragging', 'drop-target');
     ghost.style.width = box.width + 'px';
     ghost.style.height = box.height + 'px';
     ghost.style.transform = ghostAt(box.left, box.top, 1.03);
     document.body.appendChild(ghost);
     drag.ghost = ghost;
 
-    drag.tile.classList.add('dragging');
+    tile.classList.add('dragging');
     document.body.classList.add('dragging-tile');
   }
 
-  function endDrag(commit) {
-    if (!drag) return;
-    clearTimeout(drag.timer);
-    const { tile, ghost, started } = drag;
-    drag = null;
-
-    tile.classList.remove('dragging');
-    document.body.classList.remove('dragging-tile');
-    for (const node of el.tiles.children) node.style.transition = node.style.transform = '';
-
-    if (ghost) {
-      // Копия «приземляется» на место карточки — иначе она пропадает рывком,
-      // и непонятно, куда карточка встала.
-      const box = tile.getBoundingClientRect();
-      ghost.style.transition = 'transform .16s ease, box-shadow .16s ease';
-      ghost.style.transform = ghostAt(box.left, box.top, 1);
-      ghost.style.boxShadow = 'none';
-      setTimeout(() => ghost.remove(), 180);
-    }
-    if (started && commit) saveOrder();
+  // Карточка под курсором — та, с которой поменяемся местами.
+  function targetUnder(x, y) {
+    drag.ghost.style.visibility = 'hidden';       // копия перехватывает попадание
+    const under = document.elementFromPoint(x, y);
+    drag.ghost.style.visibility = '';
+    const tile = under && under.closest('.tile');
+    if (!tile || tile === drag.tile || tile.parentElement !== el.tiles) return null;
+    return tile;
   }
 
-  // Перестановка соседей: снимаем их положение до и после и проигрываем
-  // разницу сдвигом. Без этого карточки перескакивают, и глазу не за что
-  // зацепиться.
+  function dragOver(x, y) {
+    drag.ghost.style.transform = ghostAt(x - drag.grab.x, y - drag.grab.y, 1.03);
+
+    const target = targetUnder(x, y);
+    if (target === drag.target) return;
+    if (drag.target) drag.target.classList.remove('drop-target');
+    if (target) target.classList.add('drop-target');
+    drag.target = target;
+  }
+
+  // Обмен местами: карточка встаёт туда, где была цель, а цель — на её место.
+  function swap(first, second) {
+    const mark = document.createComment('');
+    el.tiles.insertBefore(mark, first);
+    el.tiles.insertBefore(first, second);
+    el.tiles.insertBefore(second, mark);
+    mark.remove();
+  }
+
+  // Обе карточки не перескакивают, а разъезжаются: снимаем положение до и
+  // после обмена и проигрываем разницу сдвигом.
   function slide(rearrange) {
     const nodes = [...el.tiles.children];
     const before = nodes.map(node => node.getBoundingClientRect());
     rearrange();
     nodes.forEach((node, index) => {
-      if (node === drag.tile) return;               // её ведёт курсор
+      if (node === drag.tile) return;             // её ведёт курсор
       const after = node.getBoundingClientRect();
       const dx = before[index].left - after.left;
       const dy = before[index].top - after.top;
@@ -622,45 +654,59 @@
     });
   }
 
-  function dragOver(x, y) {
-    drag.ghost.style.transform = ghostAt(x - drag.grab.x, y - drag.grab.y, 1.03);
+  function endDrag(commit) {
+    if (!drag) return;
+    clearTimeout(drag.timer);
+    const { tile, ghost, target, started } = drag;
+    drag = null;
 
-    // Копия перехватывает попадание — ищем карточку под ней самой.
-    drag.ghost.style.visibility = 'hidden';
-    const under = document.elementFromPoint(x, y);
-    drag.ghost.style.visibility = '';
-    const target = under && under.closest('.tile');
-    if (!target || target === drag.tile || target.parentElement !== el.tiles) return;
-    // Куда вставать, решаем по середине цели: до неё — слева, после — справа.
-    const box = target.getBoundingClientRect();
-    const before = x < box.left + box.width / 2;
-    if (before ? target.previousElementSibling === drag.tile
-               : target.nextElementSibling === drag.tile) return;   // и так на месте
-    slide(() => el.tiles.insertBefore(drag.tile, before ? target : target.nextSibling));
+    tile.classList.remove('dragging');
+    if (target) target.classList.remove('drop-target');
+    document.body.classList.remove('dragging-tile');
+
+    // Единственное изменение сетки за весь перенос — здесь.
+    const moved = started && commit && target;
+    if (moved) swap(tile, target);
+    for (const node of el.tiles.children) node.style.transition = node.style.transform = '';
+
+    if (ghost) {
+      // Копия «приземляется» на новое место карточки, а не пропадает рывком.
+      const box = tile.getBoundingClientRect();
+      ghost.style.transition = 'transform .16s ease, box-shadow .16s ease';
+      ghost.style.transform = ghostAt(box.left, box.top, 1);
+      ghost.style.boxShadow = 'none';
+      setTimeout(() => ghost.remove(), 180);
+    }
+    if (moved) saveOrder();
   }
 
-  // Указатель слушаем на окне, а не через setPointerCapture на ручке:
-  // перенос переставляет узел плитки вместе с ручкой, а Chrome снимает
-  // захват с переехавшего элемента — перетаскивание обрывалось на первом шаге.
+  // Указатель слушаем на окне: перенос уводит курсор далеко от карточки,
+  // а захват указателя на ней самой браузер снимает, когда узел переезжает.
   window.addEventListener('pointermove', event => {
     if (!drag || event.pointerId !== drag.pointerId) return;
     const far = Math.hypot(event.clientX - drag.x, event.clientY - drag.y);
     if (!drag.started) {
       // Мышь трогается с порога сдвига, палец — с удержания: на тач-экране
-      // начатое сразу перетаскивание браузер отменяет как прокрутку.
+      // начатый сразу перенос браузер отменяет как прокрутку.
       if (event.pointerType === 'mouse') { if (far > 6) startDrag(); }
-      else if (far > 8) { endDrag(false); }     // это прокрутка, а не перенос
+      else if (far > 8) { endDrag(false); }
       if (!drag || !drag.started) return;
     }
     event.preventDefault();
     dragOver(event.clientX, event.clientY);
   }, { passive: false });
 
-  for (const type of ['pointerup', 'pointercancel']) {
-    window.addEventListener(type, event => {
-      if (drag && event.pointerId === drag.pointerId) endDrag(type === 'pointerup');
-    });
-  }
+  window.addEventListener('pointerup', event => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    // Последнее движение указателя может не долететь — досчитываем цель по
+    // точке отпускания, иначе обмен уйдёт не с той карточкой.
+    if (drag.started) dragOver(event.clientX, event.clientY);
+    endDrag(true);
+  });
+
+  window.addEventListener('pointercancel', event => {
+    if (drag && event.pointerId === drag.pointerId) endDrag(false);
+  });
 
   function bindDrag(tile) {
     const node = tile.root;
@@ -696,10 +742,6 @@
       node.focus();
     });
   }
-
-  // Классы плитки переписываются на каждом опросе, а он идёт и во время
-  // переноса — без этого карточка в руке теряла бы своё состояние.
-  const held = tile => (drag && drag.tile === tile.root ? ' dragging' : '');
 
   function renderTiles(sensors) {
     for (const s of sensors) {
@@ -744,7 +786,11 @@
         tile.delta.textContent = '';
         tile.range.textContent = '';
         tile.num.style.color = '';
-        tile.root.className = 'card tile no-data' + held(tile);
+        // Классы переключаем поштучно, а не переписываем строку целиком:
+        // опрос идёт и во время переноса, а он стирал бы и «взятую»
+        // карточку, и подсветку цели.
+        tile.root.classList.add('no-data');
+        tile.root.classList.remove('stale');
         continue;
       }
 
@@ -765,7 +811,8 @@
 
       tile.at.textContent = stale ? `устарело · ${ago(s.age)}` : fmtTime(s.ts);
       tile.at.title = fmtFull(s.ts);
-      tile.root.className = 'card tile' + (stale ? ' stale' : '') + held(tile);
+      tile.root.classList.remove('no-data');
+      tile.root.classList.toggle('stale', stale);
 
       // Изменение и разброс за показанный период — по тем же точкам, что на
       // графике. Цветом знак не кодируем: для температуры «вверх» не означает
