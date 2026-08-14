@@ -38,10 +38,16 @@
   /* На сенсорном экране наведения нет — ручка видна всегда. */
   @media (hover: none) { .tile .grip { opacity: .6; } }
 
-  /* pointer-events: none здесь ставить нельзя: он снимает захват указателя
-     с ручки, и перетаскивание обрывается после первого движения. Попадание
-     в собственную плитку обработчик и так пропускает. */
-  .tile.dragging { opacity: .5; border-style: dashed; }
+  /* Пока карточку несут, на её месте остаётся пустая ячейка: так видно,
+     куда она встанет. Сама карточка едет за курсором отдельной копией. */
+  .tile.dragging { border-style: dashed; background: var(--hover); }
+  .tile.dragging > * { visibility: hidden; }
+  /* Поднятая копия: приподнята тенью и чуть увеличена — «в руке». */
+  .tile-ghost {
+    position: fixed; left: 0; top: 0; margin: 0; z-index: 40;
+    pointer-events: none; will-change: transform;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, .22);
+  }
   body.dragging-tile { user-select: none; cursor: grabbing; }
   /* Ключ серии — короткий штрих цвета линии, как на графике. */
   .tile .key { width: 14px; height: 2px; border-radius: 1px; flex: none; }
@@ -574,8 +580,24 @@
 
   let drag = null;   // { tile, pointerId, x, y, started, timer }
 
+  const ghostAt = (x, y, scale) => `translate(${x}px, ${y}px) scale(${scale})`;
+
   function startDrag() {
     drag.started = true;
+    const box = drag.tile.getBoundingClientRect();
+    drag.grab = { x: drag.x - box.left, y: drag.y - box.top };
+
+    // Копию несём за курсором, оригинал остаётся в сетке пустым местом:
+    // вынимать саму карточку из потока нельзя — сетка тут же схлопнется.
+    const ghost = drag.tile.cloneNode(true);
+    ghost.classList.add('tile-ghost');
+    ghost.classList.remove('dragging');
+    ghost.style.width = box.width + 'px';
+    ghost.style.height = box.height + 'px';
+    ghost.style.transform = ghostAt(box.left, box.top, 1.03);
+    document.body.appendChild(ghost);
+    drag.ghost = ghost;
+
     drag.tile.classList.add('dragging');
     document.body.classList.add('dragging-tile');
   }
@@ -583,21 +605,62 @@
   function endDrag(commit) {
     if (!drag) return;
     clearTimeout(drag.timer);
-    drag.tile.classList.remove('dragging');
-    document.body.classList.remove('dragging-tile');
-    const moved = drag.started;
+    const { tile, ghost, started } = drag;
     drag = null;
-    if (moved && commit) saveOrder();
+
+    tile.classList.remove('dragging');
+    document.body.classList.remove('dragging-tile');
+    for (const node of el.tiles.children) node.style.transition = node.style.transform = '';
+
+    if (ghost) {
+      // Копия «приземляется» на место карточки — иначе она пропадает рывком,
+      // и непонятно, куда карточка встала.
+      const box = tile.getBoundingClientRect();
+      ghost.style.transition = 'transform .16s ease, box-shadow .16s ease';
+      ghost.style.transform = ghostAt(box.left, box.top, 1);
+      ghost.style.boxShadow = 'none';
+      setTimeout(() => ghost.remove(), 180);
+    }
+    if (started && commit) saveOrder();
+  }
+
+  // Перестановка соседей: снимаем их положение до и после и проигрываем
+  // разницу сдвигом. Без этого карточки перескакивают, и глазу не за что
+  // зацепиться.
+  function slide(rearrange) {
+    const nodes = [...el.tiles.children];
+    const before = nodes.map(node => node.getBoundingClientRect());
+    rearrange();
+    nodes.forEach((node, index) => {
+      if (node === drag.tile) return;               // её ведёт курсор
+      const after = node.getBoundingClientRect();
+      const dx = before[index].left - after.left;
+      const dy = before[index].top - after.top;
+      if (!dx && !dy) return;
+      node.style.transition = 'none';
+      node.style.transform = `translate(${dx}px, ${dy}px)`;
+      requestAnimationFrame(() => {
+        node.style.transition = 'transform .16s ease';
+        node.style.transform = '';
+      });
+    });
   }
 
   function dragOver(x, y) {
+    drag.ghost.style.transform = ghostAt(x - drag.grab.x, y - drag.grab.y, 1.03);
+
+    // Копия перехватывает попадание — ищем карточку под ней самой.
+    drag.ghost.style.visibility = 'hidden';
     const under = document.elementFromPoint(x, y);
+    drag.ghost.style.visibility = '';
     const target = under && under.closest('.tile');
     if (!target || target === drag.tile || target.parentElement !== el.tiles) return;
     // Куда вставать, решаем по середине цели: до неё — слева, после — справа.
     const box = target.getBoundingClientRect();
     const before = x < box.left + box.width / 2;
-    el.tiles.insertBefore(drag.tile, before ? target : target.nextSibling);
+    if (before ? target.previousElementSibling === drag.tile
+               : target.nextElementSibling === drag.tile) return;   // и так на месте
+    slide(() => el.tiles.insertBefore(drag.tile, before ? target : target.nextSibling));
   }
 
   // Указатель слушаем на окне, а не через setPointerCapture на ручке:
@@ -649,6 +712,10 @@
       grip.focus();
     });
   }
+
+  // Классы плитки переписываются на каждом опросе, а он идёт и во время
+  // переноса — без этого карточка в руке теряла бы своё состояние.
+  const held = tile => (drag && drag.tile === tile.root ? ' dragging' : '');
 
   function renderTiles(sensors) {
     for (const s of sensors) {
@@ -702,7 +769,7 @@
         tile.delta.textContent = '';
         tile.range.textContent = '';
         tile.num.style.color = '';
-        tile.root.className = 'card tile no-data';
+        tile.root.className = 'card tile no-data' + held(tile);
         continue;
       }
 
@@ -723,7 +790,7 @@
 
       tile.at.textContent = stale ? `устарело · ${ago(s.age)}` : fmtTime(s.ts);
       tile.at.title = fmtFull(s.ts);
-      tile.root.className = 'card tile' + (stale ? ' stale' : '');
+      tile.root.className = 'card tile' + (stale ? ' stale' : '') + held(tile);
 
       // Изменение и разброс за показанный период — по тем же точкам, что на
       // графике. Цветом знак не кодируем: для температуры «вверх» не означает
