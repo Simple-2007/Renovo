@@ -21,6 +21,28 @@
   }
   .tile { padding: 15px 16px 12px; }
   .tile .tile-head { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; }
+
+  /* Ручка перетаскивания. Проявляется по наведению и фокусу: постоянно
+     видимая, она спорит с числом за внимание, а карточка читается чаще,
+     чем переставляется. */
+  .tile .grip {
+    margin-left: auto; padding: 2px; flex: none; cursor: grab;
+    background: none; border: 0; border-radius: 6px; color: var(--ink-muted);
+    opacity: 0; transition: opacity .18s ease, background-color .18s ease;
+    touch-action: none;   /* иначе палец на ручке прокручивает страницу */
+  }
+  .tile:hover .grip, .tile .grip:focus-visible { opacity: 1; }
+  .tile .grip:hover { background: var(--hover); color: var(--ink); }
+  .tile .grip:active { cursor: grabbing; }
+  .tile .grip svg { display: block; width: 15px; height: 15px; fill: currentColor; }
+  /* На сенсорном экране наведения нет — ручка видна всегда. */
+  @media (hover: none) { .tile .grip { opacity: .6; } }
+
+  /* pointer-events: none здесь ставить нельзя: он снимает захват указателя
+     с ручки, и перетаскивание обрывается после первого движения. Попадание
+     в собственную плитку обработчик и так пропускает. */
+  .tile.dragging { opacity: .5; border-style: dashed; }
+  body.dragging-tile { user-select: none; cursor: grabbing; }
   /* Ключ серии — короткий штрих цвета линии, как на графике. */
   .tile .key { width: 14px; height: 2px; border-radius: 1px; flex: none; }
   .tile .name {
@@ -40,13 +62,20 @@
   /* Состояние подписано словом: подкраска числа — подсказка, а не
      единственный носитель смысла. */
   .tile .state { font-weight: 600; }
-  .tile .spark { display: block; width: 100%; height: 26px; margin-top: 10px; }
+  /* Разброс за показанный период — подпись к спарклайну, стоит прямо над ним. */
+  .tile .range {
+    margin-top: 5px; font-size: 12px; color: var(--ink-muted);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .tile .spark { display: block; width: 100%; height: 26px; margin-top: 6px; }
   .tile.no-data .value, .tile.stale .value { color: var(--ink-muted); }
   /* Прочерк в пустой плитке набирается обычным весом: при 650 он читается
      как жирная полоса, а не как «значения нет». */
   .tile.no-data .num { font-weight: 400; }
   .tile.no-data .unit { opacity: .5; }
   .tile.no-data .spark { visibility: hidden; }
+  .tile.no-data .range { visibility: hidden; }
   /* Устаревшая плитка гасит не только число: сплошная заливка сменяется
      штриховой рамкой, чтобы состояние читалось и без цвета. */
   .tile.stale { border-style: dashed; }
@@ -273,7 +302,7 @@
 </div>
 
 {% if device %}
-  <div class="tiles" id="tiles"></div>
+  <div class="tiles" id="tiles" data-device="{{ device.slug }}"></div>
 
   <div class="filters">
     <div class="seg" id="ranges" role="group" aria-label="Период истории">
@@ -500,6 +529,124 @@
     tile.spark.innerHTML = line ? sparkline(line.points.slice(-40), color) : '';
   }
 
+  /* ── Порядок плиток: перетаскивание за ручку ─────────────────────────
+     Порядок у каждого читателя свой и живёт в его браузере: страница
+     публичная, и запись общего порядка в базу дала бы любому зрителю
+     переставлять карточки всем остальным. Порядок «по умолчанию» задаётся
+     в админке полем «порядок» у датчика. */
+
+  const orderKey = `renovo-tiles-${el.tiles.dataset.device || 'default'}`;
+  let tileOrder = [];
+  try {
+    const saved = JSON.parse(localStorage.getItem(orderKey));
+    if (Array.isArray(saved)) tileOrder = saved.filter(key => typeof key === 'string');
+  } catch (e) { /* приватный режим или мусор в хранилище — порядок по умолчанию */ }
+
+  const rank = key => {
+    const index = tileOrder.indexOf(key);
+    return index === -1 ? Infinity : index;   // незнакомый датчик — в конец
+  };
+
+  // Расставить существующие плитки по сохранённому порядку. Трогаем DOM
+  // только при реальном расхождении: перенос узла сбрасывает фокус и
+  // прерывает наведение, а renderTiles зовётся каждые несколько секунд.
+  function applyOrder() {
+    if (drag) return;                          // не спорим с рукой читателя
+    const keys = [...tiles.keys()];
+    const desired = keys.slice().sort((a, b) => rank(a) - rank(b) || keys.indexOf(a) - keys.indexOf(b));
+    const current = [...el.tiles.children].map(node => node.dataset.key);
+    if (desired.join('|') === current.join('|')) return;
+    for (const key of desired) el.tiles.appendChild(tiles.get(key).root);
+  }
+
+  function saveOrder() {
+    tileOrder = [...el.tiles.children].map(node => node.dataset.key);
+    try { localStorage.setItem(orderKey, JSON.stringify(tileOrder)); } catch (e) { /* приватный режим */ }
+    // Легенда и колонки таблицы идут следом за плитками: иначе на одной
+    // странице оказалось бы два разных порядка одних и тех же датчиков.
+    series.sort((a, b) => rank(a.key) - rank(b.key));
+    buildChart();
+    renderTable();
+  }
+
+  let drag = null;   // { tile, pointerId, x, y, started, timer }
+
+  function startDrag() {
+    drag.started = true;
+    drag.tile.classList.add('dragging');
+    document.body.classList.add('dragging-tile');
+  }
+
+  function endDrag(commit) {
+    if (!drag) return;
+    clearTimeout(drag.timer);
+    drag.tile.classList.remove('dragging');
+    document.body.classList.remove('dragging-tile');
+    const moved = drag.started;
+    drag = null;
+    if (moved && commit) saveOrder();
+  }
+
+  function dragOver(x, y) {
+    const under = document.elementFromPoint(x, y);
+    const target = under && under.closest('.tile');
+    if (!target || target === drag.tile || target.parentElement !== el.tiles) return;
+    // Куда вставать, решаем по середине цели: до неё — слева, после — справа.
+    const box = target.getBoundingClientRect();
+    const before = x < box.left + box.width / 2;
+    el.tiles.insertBefore(drag.tile, before ? target : target.nextSibling);
+  }
+
+  // Указатель слушаем на окне, а не через setPointerCapture на ручке:
+  // перенос переставляет узел плитки вместе с ручкой, а Chrome снимает
+  // захват с переехавшего элемента — перетаскивание обрывалось на первом шаге.
+  window.addEventListener('pointermove', event => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const far = Math.hypot(event.clientX - drag.x, event.clientY - drag.y);
+    if (!drag.started) {
+      // Мышь трогается с порога сдвига, палец — с удержания: на тач-экране
+      // начатое сразу перетаскивание браузер отменяет как прокрутку.
+      if (event.pointerType === 'mouse') { if (far > 6) startDrag(); }
+      else if (far > 8) { endDrag(false); }     // это прокрутка, а не перенос
+      if (!drag || !drag.started) return;
+    }
+    event.preventDefault();
+    dragOver(event.clientX, event.clientY);
+  }, { passive: false });
+
+  for (const type of ['pointerup', 'pointercancel']) {
+    window.addEventListener(type, event => {
+      if (drag && event.pointerId === drag.pointerId) endDrag(type === 'pointerup');
+    });
+  }
+
+  function bindDrag(tile, grip) {
+    grip.addEventListener('pointerdown', event => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      drag = {
+        tile: tile.root, pointerId: event.pointerId,
+        x: event.clientX, y: event.clientY, started: false, timer: 0,
+      };
+      if (event.pointerType !== 'mouse') drag.timer = setTimeout(startDrag, 250);
+    });
+
+    // С клавиатуры карточка ходит стрелками: перетаскивание мышью — не
+    // единственный способ, иначе порядок недоступен без указателя.
+    grip.addEventListener('keydown', event => {
+      const back = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
+      const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown';
+      if (!back && !forward) return;
+      const node = tile.root;
+      const sibling = back ? node.previousElementSibling : node.nextElementSibling;
+      if (!sibling) return;
+      event.preventDefault();
+      if (back) el.tiles.insertBefore(node, sibling);
+      else el.tiles.insertBefore(sibling, node);
+      saveOrder();
+      grip.focus();
+    });
+  }
+
   function renderTiles(sensors) {
     for (const s of sensors) {
       let tile = tiles.get(s.key);
@@ -507,9 +654,18 @@
         const root = document.createElement('div');
         root.className = 'card tile';
         root.innerHTML =
-          `<div class="tile-head"><span class="key"></span><span class="name"></span></div>
+          `<div class="tile-head"><span class="key"></span><span class="name"></span>
+             <button type="button" class="grip" aria-label="Переставить карточку"
+                     title="Перетащите за ручку или переставьте стрелками">
+               <svg viewBox="0 0 16 16" aria-hidden="true">
+                 <circle cx="6" cy="4" r="1.3"/><circle cx="10" cy="4" r="1.3"/>
+                 <circle cx="6" cy="8" r="1.3"/><circle cx="10" cy="8" r="1.3"/>
+                 <circle cx="6" cy="12" r="1.3"/><circle cx="10" cy="12" r="1.3"/>
+               </svg>
+             </button></div>
            <div class="value"><span class="num">—</span><span class="unit"></span></div>
            <div class="meta"><span class="at"></span><span class="state"></span><span class="delta"></span></div>
+           <div class="range"></div>
            <svg class="spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true"></svg>`;
         el.tiles.appendChild(root);
         tile = {
@@ -521,9 +677,13 @@
           at: root.querySelector('.at'),
           state: root.querySelector('.state'),
           delta: root.querySelector('.delta'),
+          range: root.querySelector('.range'),
           spark: root.querySelector('.spark'),
+          grip: root.querySelector('.grip'),
         };
+        root.dataset.key = s.key;
         tiles.set(s.key, tile);
+        bindDrag(tile, tile.grip);
       }
 
       // Имя приходит извне — вставляем только текстом.
@@ -537,6 +697,7 @@
         tile.at.textContent = 'нет данных';
         tile.state.textContent = '';
         tile.delta.textContent = '';
+        tile.range.textContent = '';
         tile.num.style.color = '';
         tile.root.className = 'card tile no-data';
         continue;
@@ -561,16 +722,29 @@
       tile.at.title = fmtFull(s.ts);
       tile.root.className = 'card tile' + (stale ? ' stale' : '');
 
-      // Изменение за выбранный период. Цветом знак не кодируем: для
-      // температуры «вверх» не означает «хорошо».
+      // Изменение и разброс за показанный период — по тем же точкам, что на
+      // графике. Цветом знак не кодируем: для температуры «вверх» не означает
+      // «хорошо».
       const line = series.find(x => x.key === s.key);
       if (line && line.points.length > 1) {
         const diff = s.value - line.points[0].v;
         tile.delta.textContent = (diff >= 0 ? '+' : '−') + Math.abs(diff).toFixed(1) + ' °C';
+
+        // Идём циклом, а не Math.min(...points): на недельном окне точек
+        // десятки тысяч, и раскрытие их в аргументы упирается в предел стека.
+        let low = Infinity, high = -Infinity;
+        for (const point of line.points) {
+          if (point.v < low) low = point.v;
+          if (point.v > high) high = point.v;
+        }
+        tile.range.textContent = `мин ${low.toFixed(1)} · макс ${high.toFixed(1)} ${s.unit}`;
       } else {
         tile.delta.textContent = '';
+        tile.range.textContent = '';
       }
     }
+
+    applyOrder();
   }
 
   /* ── Плагины графика ─────────────────────────────────────────────── */
@@ -964,9 +1138,14 @@
       // их местами и обрезать период по потолку.
       fromMs = payload.from ? new Date(payload.from).getTime() : -Infinity;
       live = !payload.to || new Date(payload.to).getTime() > Date.now();
-      series = payload.series;
+      // Порядок читателя действует и здесь: иначе после перезагрузки плитки
+      // стоят по-своему, а легенда и колонки таблицы — по-серверному.
+      series = payload.series.sort((a, b) => rank(a.key) - rank(b.key));
       buildChart();
       renderTable();
+      // Плитки считают разброс и изменение по этим же точкам — обновляем их
+      // сразу, иначе цифры отстают от графика до следующего опроса.
+      if (lastSensors.length) renderTiles(lastSensors);
     } finally {
       el.card.classList.remove('loading');
     }
