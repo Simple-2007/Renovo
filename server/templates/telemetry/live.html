@@ -141,25 +141,43 @@
     margin-right: 6px; vertical-align: middle;
   }
 
-  /* Пагинация: сколько записей видно, где мы в истории и куда шагать. */
+  /* ── Пагинация: счётчик слева, номера по центру, размер страницы справа ── */
   .pager {
-    display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap;
-    padding: 12px 2px 2px; font-size: 13px; color: var(--ink-muted);
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    gap: 10px 16px; padding: 14px 4px 2px;
+    border-top: 1px solid var(--border);
+    font-size: 13px; color: var(--ink-muted);
   }
-  .pager .count { margin-right: auto; font-variant-numeric: tabular-nums; }
-  .pager .label { color: var(--ink-muted); }
-  .pager .seg button { padding: 6px 12px; }
-  .pager-nav { display: inline-flex; align-items: center; gap: 8px; }
-  .pager-nav .page-of { font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .page-btn {
-    font: inherit; font-size: 13px; padding: 6px 12px; cursor: pointer;
+  .pager .count { font-variant-numeric: tabular-nums; }
+  .pages { display: inline-flex; align-items: center; gap: 6px; justify-content: center; }
+  .pages button {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 34px; height: 34px; padding: 0 9px;
+    font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer;
     background: var(--surface); color: var(--ink-secondary);
     border: 1px solid var(--border); border-radius: 8px;
     transition: background-color .18s ease, color .18s ease;
   }
-  .page-btn:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
-  /* Недоступный шаг гасим, но оставляем на месте: кнопки не должны прыгать. */
-  .page-btn:disabled { opacity: .45; cursor: default; }
+  .pages button:hover:not(:disabled):not([aria-current="page"]) {
+    background: var(--hover); color: var(--ink);
+  }
+  /* Текущая страница залита так же, как нажатая кнопка периода: на странице
+     уже есть этот приём, второй способ выделения был бы лишним. */
+  .pages button[aria-current="page"] {
+    background: var(--ink); color: var(--surface); border-color: var(--ink); font-weight: 600;
+  }
+  /* Недоступную стрелку гасим, но оставляем на месте: ряд не должен прыгать. */
+  .pages button:disabled { opacity: .4; cursor: default; }
+  .pages .gap { min-width: 16px; text-align: center; }
+  .per-page {
+    display: inline-flex; align-items: center; gap: 8px;
+    justify-self: end; white-space: nowrap;
+  }
+  .per-page select {
+    font: inherit; font-size: 13px; padding: 6px 8px; cursor: pointer;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 8px;
+  }
 
   .empty-state { padding: 48px 24px; text-align: center; color: var(--ink-secondary); }
   .empty-state h2 { color: var(--ink); font-size: 17px; margin-bottom: 8px; }
@@ -172,8 +190,9 @@
     .ghost-btn { margin-left: 0; }
     .seg { width: 100%; }
     .seg button { flex: 1; padding: 9px 8px; }
-    .pager .count { width: 100%; margin-right: 0; }
-    .pager-nav { margin-left: auto; }
+    /* Узкий экран: номера уезжают на свою строку, счётчик и выбор — над ними. */
+    .pager { display: flex; flex-wrap: wrap; justify-content: space-between; }
+    .pages { order: 3; width: 100%; flex-wrap: wrap; }
   }
 </style>
 {% endblock %}
@@ -220,17 +239,14 @@
     </div>
     <div class="pager">
       <span class="count" id="page-count" aria-live="polite"></span>
-      <span class="label">На странице</span>
-      <div class="seg" id="page-sizes" role="group" aria-label="Записей на странице">
-        <button type="button" data-size="25" aria-pressed="true">25</button>
-        <button type="button" data-size="50" aria-pressed="false">50</button>
-        <button type="button" data-size="100" aria-pressed="false">100</button>
-      </div>
-      <div class="pager-nav">
-        <button type="button" class="page-btn" id="page-prev">← Новее</button>
-        <span class="page-of" id="page-of"></span>
-        <button type="button" class="page-btn" id="page-next">Старее →</button>
-      </div>
+      <nav class="pages" id="pages" aria-label="Страницы таблицы"></nav>
+      <label class="per-page">На странице
+        <select id="page-size">
+          <option value="25" selected>25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
     </div>
   </div>
 {% else %}
@@ -261,11 +277,9 @@
     tableHead: document.getElementById('table-head'),
     tableBody: document.getElementById('table-body'),
     tableToggle: document.getElementById('table-toggle'),
-    pageSizes: document.getElementById('page-sizes'),
+    pageSize: document.getElementById('page-size'),
     pageCount: document.getElementById('page-count'),
-    pageOf: document.getElementById('page-of'),
-    pagePrev: document.getElementById('page-prev'),
-    pageNext: document.getElementById('page-next'),
+    pages: document.getElementById('pages'),
   };
 
   let minutes = 360;
@@ -686,6 +700,76 @@
 
   /* ── Таблица ─────────────────────────────────────────────────────── */
 
+  // «из 1 записи», но «из 2 записей»: русский счёт после «из» — родительный.
+  const records = n => (n % 10 === 1 && n % 100 !== 11 ? 'записи' : 'записей');
+
+  // Какие номера показать. Всё влезает — показываем всё; иначе держим края,
+  // окрестность текущей страницы и разрыв «…» между ними. Полосу удерживаем
+  // одной ширины, чтобы кнопки не разъезжались при переходе.
+  function pageNumbers(current, total) {
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+
+    const keep = new Set([1, total, current - 1, current, current + 1]);
+    if (current <= 3) [2, 3, 4].forEach(p => keep.add(p));
+    if (current >= total - 2) [total - 3, total - 2, total - 1].forEach(p => keep.add(p));
+
+    const list = [...keep].filter(p => p >= 1 && p <= total).sort((a, b) => a - b);
+    const out = [];
+    for (const p of list) {
+      if (out.length && p - out[out.length - 1] > 1) out.push('…');
+      out.push(p);
+    }
+    return out;
+  }
+
+  function pageButton(text, label, target, options = {}) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = text;
+    if (label) button.setAttribute('aria-label', label);
+    if (options.current) button.setAttribute('aria-current', 'page');
+    if (options.disabled) button.disabled = true;
+    else button.addEventListener('click', () => goToPage(target));
+    return button;
+  }
+
+  function renderPager(pages) {
+    el.pages.replaceChildren();
+    if (pages < 2) return;          // одна страница — навигация не нужна
+
+    el.pages.append(pageButton('‹', 'Предыдущая страница', page - 1, { disabled: page === 0 }));
+    for (const item of pageNumbers(page + 1, pages)) {
+      if (item === '…') {
+        const gap = document.createElement('span');
+        gap.className = 'gap';
+        gap.textContent = '…';
+        el.pages.appendChild(gap);
+        continue;
+      }
+      el.pages.append(pageButton(String(item), `Страница ${item}`, item - 1,
+                                 { current: item === page + 1 }));
+    }
+    el.pages.append(pageButton('›', 'Следующая страница', page + 1,
+                               { disabled: page >= pages - 1 }));
+  }
+
+  function goToPage(target) {
+    // Ряд кнопок пересобирается целиком, вместе с только что нажатой, — браузер
+    // теряет якорь прокрутки и уводит страницу к началу. Держим position сами.
+    const scroll = window.scrollY;
+    const keyboard = el.pages.contains(document.activeElement);
+
+    anchorTs = null;                // прыжок по номеру — якорь пересчитает renderTable
+    page = Math.max(target, 0);
+    renderTable();
+
+    window.scrollTo({ top: scroll });
+    if (keyboard) {
+      const current = el.pages.querySelector('button[aria-current="page"]');
+      if (current) current.focus({ preventScroll: true });
+    }
+  }
+
   function renderTable() {
     if (el.tableWrap.hidden) return;
 
@@ -730,11 +814,9 @@
     anchorTs = page === 0 || !shown.length ? null : shown[0][0];
 
     el.pageCount.textContent = sorted.length
-      ? `Записи ${from + 1}–${from + shown.length} из ${sorted.length}`
+      ? `Показано ${from + 1}–${from + shown.length} из ${sorted.length} ${records(sorted.length)}`
       : 'Записей за выбранный период нет';
-    el.pageOf.textContent = `${page + 1} / ${pages}`;
-    el.pagePrev.disabled = page === 0;
-    el.pageNext.disabled = page >= pages - 1;
+    renderPager(pages);
 
     el.tableBody.replaceChildren();
     for (const [ts, values] of shown) {
@@ -801,27 +883,10 @@
     loadSeries(minutes).catch(() => setStatus('offline', 'сервер недоступен'));
   });
 
-  el.pageSizes.addEventListener('click', event => {
-    const button = event.target.closest('button');
-    if (!button) return;
-    for (const b of event.currentTarget.querySelectorAll('button')) {
-      b.setAttribute('aria-pressed', String(b === button));
-    }
-    // Якорь оставляем: после смены размера страницы верхняя строка остаётся
-    // на виду, читатель не теряет место в истории.
-    pageSize = Number(button.dataset.size);
-    renderTable();
-  });
-
-  el.pagePrev.addEventListener('click', () => {
-    anchorTs = null;
-    page = Math.max(page - 1, 0);
-    renderTable();
-  });
-
-  el.pageNext.addEventListener('click', () => {
-    anchorTs = null;
-    page += 1;                    // верхнюю границу ставит сама renderTable
+  // Якорь при смене размера оставляем: верхняя строка остаётся на виду,
+  // читатель не теряет место в истории.
+  el.pageSize.addEventListener('change', () => {
+    pageSize = Number(el.pageSize.value) || PAGE_SIZES[0];
     renderTable();
   });
 
