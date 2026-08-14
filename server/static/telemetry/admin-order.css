@@ -31,9 +31,37 @@
   text-align: center;
 }
 
+/* Ручка, флажок выбора и название — на одной линии. Ячейки списка Django
+   выравнивает по верху, и элементы разной высоты расходятся: флажок сидит
+   выше названия, ручка ниже. Ссылку на объект Django рендерит как th,
+   поэтому равняем и th, и td. */
+#result_list tbody th, #result_list tbody td { vertical-align: middle; }
+#result_list td.action-checkbox input { margin: 0; vertical-align: middle; }
+.row-grip { vertical-align: middle; }
+
+/* Строка в переносе: на её месте остаётся пустое место, а сама строка
+   едет за курсором отдельной копией. */
 tr.dragging > td, tr.dragging > th {
-  opacity: .55;
   background: var(--darkened-bg, #f0f0f0);
+}
+tr.dragging > td > *, tr.dragging > th > * { visibility: hidden; }
+
+.row-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 100;
+  pointer-events: none;
+  border-collapse: collapse;
+  background: var(--body-bg, #fff);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .25);
+  will-change: transform;
+}
+.row-ghost td, .row-ghost th {
+  padding: 8px;
+  border: 0;
+  white-space: nowrap;
+  overflow: hidden;
 }
 body.dragging-row { user-select: none; cursor: grabbing; }
 
