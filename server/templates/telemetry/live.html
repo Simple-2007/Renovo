@@ -544,7 +544,10 @@
 
   const rank = key => {
     const index = tileOrder.indexOf(key);
-    return index === -1 ? Infinity : index;   // незнакомый датчик — в конец
+    // Незнакомый датчик — в конец. Не Infinity: разность двух Infinity даёт
+    // NaN, а компаратор, вернувший NaN, оставляет порядок на усмотрение
+    // движка — при первом заходе, когда неизвестны все ключи сразу.
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
   };
 
   // Расставить существующие плитки по сохранённому порядку. Трогаем DOM
