@@ -76,13 +76,64 @@
   .range-fields { display: inline-flex; align-items: center; gap: 8px; }
   /* display перебивает атрибут hidden — гасим явно, иначе поля видны всегда. */
   .range-fields[hidden] { display: none; }
-  .range-fields input {
-    font: inherit; font-size: 13px; padding: 7px 10px;
-    background: var(--surface); color: var(--ink);
+  .range-fields .dash { color: var(--ink-muted); }
+
+  /* Поле даты своё, а не input[type=date]: нативное в Chrome набирает год
+     «с добивкой справа» (2 → 0002 → 0020 → 0202 → 2026), и это не отключается.
+     Маска дд.мм.гггг плюс свой календарь — как в service-crm. */
+  .date-field { position: relative; }
+  .date-field input {
+    font: inherit; font-size: 13px; width: 134px; padding: 7px 30px 7px 10px;
+    background: var(--surface); color: var(--ink); font-variant-numeric: tabular-nums;
     border: 1px solid var(--border); border-radius: 8px;
   }
-  .range-fields input:hover { background: var(--hover); }
-  .range-fields .dash { color: var(--ink-muted); }
+  .date-field input::placeholder { color: var(--ink-muted); }
+  .date-field input[aria-invalid="true"] { border-color: var(--status-critical); }
+  .cal-btn {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    display: inline-flex; padding: 4px; cursor: pointer; color: var(--ink-muted);
+    background: none; border: 0; border-radius: 6px;
+    transition: background-color .18s ease, color .18s ease;
+  }
+  .cal-btn:hover { background: var(--hover); color: var(--ink); }
+  .cal-btn svg { width: 15px; height: 15px; }
+
+  .cal-pop {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; width: 238px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, .16);
+  }
+  /* Календарь второго поля открываем влево: иначе на узком экране он
+     вылезает за край и тянет за собой горизонтальную прокрутку. */
+  .range-fields .date-field:last-of-type .cal-pop { left: auto; right: 0; }
+  .cal-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+  .cal-head button {
+    font: inherit; font-size: 13px; padding: 4px 8px; cursor: pointer;
+    background: none; border: 0; border-radius: 6px; color: var(--ink-secondary);
+  }
+  .cal-head button:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+  .cal-head .cal-title { font-weight: 600; color: var(--ink); }
+  .cal-head .cal-title:disabled { cursor: default; }
+  .cal-weekdays, .cal-days { display: grid; grid-template-columns: repeat(7, 1fr); }
+  .cal-weekdays { margin-top: 8px; font-size: 11px; color: var(--ink-muted); text-align: center; }
+  .cal-days button {
+    width: 29px; height: 29px; margin: 1px auto; cursor: pointer;
+    font: inherit; font-size: 13px; font-variant-numeric: tabular-nums;
+    background: none; border: 0; border-radius: 50%; color: var(--ink);
+  }
+  .cal-days button:hover { background: var(--hover); }
+  /* Хвосты соседних месяцев приглушены: сетка всегда в шесть недель, чтобы
+     не прыгала по высоте. */
+  .cal-days button.out { color: var(--ink-muted); opacity: .6; }
+  .cal-days button.today { font-weight: 700; }
+  .cal-days button.on { background: var(--ink); color: var(--surface); font-weight: 600; }
+  .cal-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 8px; }
+  .cal-pick button {
+    font: inherit; font-size: 13px; padding: 8px 4px; cursor: pointer;
+    background: none; border: 0; border-radius: 8px; color: var(--ink);
+  }
+  .cal-pick button:hover { background: var(--hover); }
+  .cal-pick button.on { background: var(--ink); color: var(--surface); font-weight: 600; }
   .ghost-btn {
     font: inherit; font-size: 13px; padding: 8px 14px; cursor: pointer;
     background: var(--surface); color: var(--ink-secondary);
@@ -202,7 +253,8 @@
     .seg { width: 100%; }
     .seg button { flex: 1; padding: 9px 8px; }
     .range-fields { width: 100%; }
-    .range-fields input { flex: 1; min-width: 0; }
+    .range-fields .date-field { flex: 1; min-width: 0; }
+    .date-field input { width: 100%; }
     /* Узкий экран: номера уезжают на свою строку, счётчик и выбор — над ними. */
     .pager { display: flex; flex-wrap: wrap; justify-content: space-between; }
     .pages { order: 3; width: 100%; flex-wrap: wrap; }
@@ -233,9 +285,31 @@
               aria-expanded="false" aria-controls="range-fields">Период</button>
     </div>
     <div class="range-fields" id="range-fields" hidden>
-      <input type="date" id="range-from" aria-label="Начало периода">
+      <div class="date-field" id="range-from">
+        <input type="text" inputmode="numeric" autocomplete="off" maxlength="10"
+               placeholder="дд.мм.гггг" aria-label="Начало периода">
+        <button type="button" class="cal-btn" aria-label="Открыть календарь" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" aria-hidden="true">
+            <rect x="3" y="4.5" width="18" height="16" rx="2.5"/>
+            <path d="M3 9.5h18M8 2.8v3.4M16 2.8v3.4"/>
+          </svg>
+        </button>
+        <div class="cal-pop" hidden></div>
+      </div>
       <span class="dash" aria-hidden="true">—</span>
-      <input type="date" id="range-to" aria-label="Конец периода">
+      <div class="date-field" id="range-to">
+        <input type="text" inputmode="numeric" autocomplete="off" maxlength="10"
+               placeholder="дд.мм.гггг" aria-label="Конец периода">
+        <button type="button" class="cal-btn" aria-label="Открыть календарь" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" aria-hidden="true">
+            <rect x="3" y="4.5" width="18" height="16" rx="2.5"/>
+            <path d="M3 9.5h18M8 2.8v3.4M16 2.8v3.4"/>
+          </svg>
+        </button>
+        <div class="cal-pop" hidden></div>
+      </div>
     </div>
     <button type="button" class="ghost-btn" id="table-toggle" aria-expanded="false">Показать таблицу</button>
   </div>
@@ -922,6 +996,257 @@
   // что подписаны на графике. Локаль en-CA даёт готовый формат ГГГГ-ММ-ДД.
   const siteToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: siteZone }).format(new Date());
 
+  /* ── Поле даты: своя маска дд.мм.гггг и свой календарь ───────────────
+     Нативный input[type=date] в Chrome набирает год «с добивкой справа»
+     (2 → 0002 → 0020 → 0202 → 2026) и это не отключается. Разбор набора
+     повторяет date-input.tsx из service-crm. */
+
+  const WEEKDAYS = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+  const monthTitle = date => new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' })
+    .format(date).replace(' г.', '');
+  // Сокращения оставляем с точкой: «февр.» без неё читается как обрубок.
+  const monthShort = index => new Intl.DateTimeFormat('ru-RU', { month: 'short' })
+    .format(new Date(2000, index, 1));
+
+  const pad2 = n => String(n).padStart(2, '0');
+  const isoOf = date => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  const dateOf = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+  const addMonths = (date, count) => new Date(date.getFullYear(), date.getMonth() + count, 1);
+
+  const isoToDigits = iso => {
+    const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+    return parts ? parts[3] + parts[2] + parts[1] : '';
+  };
+
+  // Строка цифр → ISO, если это полная существующая дата, иначе null.
+  function digitsToIso(digits) {
+    if (digits.length !== 8) return null;
+    const day = Number(digits.slice(0, 2));
+    const month = Number(digits.slice(2, 4));
+    const year = Number(digits.slice(4));
+    const date = new Date(year, month - 1, day);
+    const valid = year >= 1900 && year <= 2100 && date.getFullYear() === year &&
+      date.getMonth() === month - 1 && date.getDate() === day;
+    return valid ? `${digits.slice(4)}-${digits.slice(2, 4)}-${digits.slice(0, 2)}` : null;
+  }
+
+  const formatDigits = d => d.length <= 2 ? d
+    : d.length <= 4 ? `${d.slice(0, 2)}.${d.slice(2)}`
+    : `${d.slice(0, 2)}.${d.slice(2, 4)}.${d.slice(4)}`;
+
+  // Автоподстановка нуля: «5» в пустое поле — сразу «05», «7» в первой позиции
+  // месяца — «07»: дня больше 39 и месяца больше 19 не бывает.
+  function appendDigit(base, ch) {
+    if (base.length >= 8) return base;
+    if (base.length === 0 && ch > '3') return '0' + ch;
+    if (base.length === 2 && ch > '1') return base + '0' + ch;
+    return base + ch;
+  }
+
+  function dateField(root, commit) {
+    const input = root.querySelector('input');
+    const toggle = root.querySelector('.cal-btn');
+    const pop = root.querySelector('.cal-pop');
+
+    let value = '';        // применённое значение: ISO или пусто
+    let digits = '';       // что набрано в поле
+    let month = null;      // месяц, открытый в календаре
+    let mode = 'days';     // дни → месяцы → годы
+
+    function paint() {
+      input.value = formatDigits(digits);
+      const broken = digits.length === 8 && digitsToIso(digits) === null;
+      input.setAttribute('aria-invalid', String(broken));
+    }
+
+    // Наружу отдаём только полную дату или очистку — промежуточный набор
+    // фильтр не дёргает.
+    function apply(next) {
+      digits = next;
+      paint();
+      if (!next.length) {
+        if (value !== '') { value = ''; commit(); }
+        return;
+      }
+      const iso = digitsToIso(next);
+      if (iso && iso !== value) { value = iso; commit(); }
+    }
+
+    // Курсор держим в конце: маска дописывается справа, редактирование
+    // середины строки не поддерживаем — это цена предсказуемого набора.
+    // Двигаем синхронно, сразу после перерисовки поля: с откладыванием на кадр
+    // быстрый набор (или вставка) успевает уйти в начало строки и перемешаться.
+    const caretToEnd = () => input.setSelectionRange(input.value.length, input.value.length);
+
+    input.addEventListener('input', () => {
+      const raw = input.value;
+      let next = raw.replace(/\D/g, '').slice(0, 8);
+      if (next.length > digits.length) {
+        let acc = digits;
+        for (const ch of next.slice(digits.length)) acc = appendDigit(acc, ch);
+        next = acc.slice(0, 8);
+      } else if (next === digits && raw.length < formatDigits(digits).length) {
+        // Backspace съел точку-разделитель — считаем, что стёрли цифру перед ней.
+        next = digits.slice(0, -1);
+      }
+      apply(next);
+      caretToEnd();
+    });
+
+    input.addEventListener('keydown', event => {
+      // Del стирает дату целиком и сразу применяет: пустая граница периода —
+      // законное состояние, а не полуфабрикат.
+      if (event.key === 'Delete') { event.preventDefault(); apply(''); }
+      if (event.key === 'Escape' && !pop.hidden) closeCal();
+    });
+
+    // Двойной клик выделяет дату целиком: точки дробят её на «слова», и штатное
+    // выделение цепляет только один кусок.
+    input.addEventListener('dblclick', () => input.select());
+
+    input.addEventListener('blur', () => {
+      // Недобранную дату не храним — откат к последнему применённому значению.
+      if (digits.length && digitsToIso(digits) === null) { digits = isoToDigits(value); paint(); }
+    });
+
+    function openCal() {
+      const anchor = dateOf(value || siteToday());
+      month = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+      mode = 'days';
+      pop.hidden = false;
+      toggle.setAttribute('aria-expanded', 'true');
+      renderCal();
+    }
+
+    function closeCal() {
+      pop.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+
+    toggle.addEventListener('click', () => { if (pop.hidden) openCal(); else closeCal(); });
+    document.addEventListener('click', event => {
+      // Смотрим путь события, а не текущий DOM: клик по заголовку календаря
+      // пересобирает поповер, и к моменту всплытия нажатая кнопка уже
+      // отсоединена — по root.contains() такой клик выглядел бы внешним.
+      if (!pop.hidden && !event.composedPath().includes(root)) closeCal();
+    });
+
+    function button(text, className, onClick, label) {
+      const node = document.createElement('button');
+      node.type = 'button';
+      node.textContent = text;
+      if (className) node.className = className;
+      if (label) node.setAttribute('aria-label', label);
+      node.addEventListener('click', onClick);
+      return node;
+    }
+
+    // Календарь с проваливанием по уровням: клик по «август 2026» открывает
+    // сетку месяцев, оттуда — сетку лет. Стрелки листают текущий уровень.
+    function renderCal() {
+      pop.replaceChildren();
+      const year = month.getFullYear();
+      const yearsFrom = year - (year % 12);
+      const step = mode === 'days' ? 1 : mode === 'months' ? 12 : 144;
+      const stepName = mode === 'days' ? 'месяц' : mode === 'months' ? 'год' : '12 лет';
+      const title = mode === 'days' ? monthTitle(month)
+        : mode === 'months' ? String(year)
+        : `${yearsFrom} – ${yearsFrom + 11}`;
+
+      const head = document.createElement('div');
+      head.className = 'cal-head';
+      head.append(
+        button('‹', '', () => { month = addMonths(month, -step); renderCal(); }, `Предыдущий ${stepName}`),
+        button(title, 'cal-title', () => {
+          mode = mode === 'days' ? 'months' : 'years';
+          renderCal();
+        }),
+        button('›', '', () => { month = addMonths(month, step); renderCal(); }, `Следующий ${stepName}`),
+      );
+      if (mode === 'years') head.querySelector('.cal-title').disabled = true;
+      pop.appendChild(head);
+
+      if (mode === 'days') { pop.append(weekdaysRow(), daysGrid()); return; }
+
+      const grid = document.createElement('div');
+      grid.className = 'cal-pick';
+      const picked = value ? dateOf(value) : null;
+      for (let i = 0; i < 12; i++) {
+        const months = mode === 'months';
+        const selected = picked !== null && (months
+          ? picked.getFullYear() === year && picked.getMonth() === i
+          : picked.getFullYear() === yearsFrom + i);
+        grid.appendChild(button(
+          months ? monthShort(i) : String(yearsFrom + i),
+          selected ? 'on' : '',
+          () => {
+            month = months ? new Date(year, i, 1) : new Date(yearsFrom + i, month.getMonth(), 1);
+            mode = months ? 'days' : 'months';
+            renderCal();
+          },
+        ));
+      }
+      pop.appendChild(grid);
+    }
+
+    function weekdaysRow() {
+      const row = document.createElement('div');
+      row.className = 'cal-weekdays';
+      for (const name of WEEKDAYS) {
+        const cell = document.createElement('span');
+        cell.textContent = name;
+        row.appendChild(cell);
+      }
+      return row;
+    }
+
+    function daysGrid() {
+      const grid = document.createElement('div');
+      grid.className = 'cal-days';
+      // Неделя с понедельника; шесть недель всегда — сетка не прыгает по высоте.
+      const shift = (month.getDay() + 6) % 7;
+      const today = siteToday();
+      for (let i = 0; i < 42; i++) {
+        const day = new Date(month.getFullYear(), month.getMonth(), 1 - shift + i);
+        const iso = isoOf(day);
+        const classes = [
+          day.getMonth() === month.getMonth() ? '' : 'out',
+          iso === value ? 'on' : '',
+          iso === today ? 'today' : '',
+        ].filter(Boolean).join(' ');
+        const node = button(String(day.getDate()), classes, () => {
+          apply(isoToDigits(iso));
+          closeCal();
+          input.focus();
+        });
+        if (iso === value) node.setAttribute('aria-current', 'date');
+        grid.appendChild(node);
+      }
+      return grid;
+    }
+
+    return {
+      get value() { return value; },
+      // Присваивание снаружи (перестановка границ) фильтр не дёргает.
+      set value(next) { value = next || ''; digits = isoToDigits(value); paint(); },
+    };
+  }
+
+
+  // Свести обе даты в одно окно и применить. Перевёрнутый период не ошибка:
+  // границы меняем местами, чтобы в полях стояло ровно то, что применилось.
+  function applyDates() {
+    if (fromField.value && toField.value && fromField.value > toField.value) {
+      const swap = fromField.value;
+      fromField.value = toField.value;
+      toField.value = swap;
+    }
+    applyRange({ custom: true, from: fromField.value, to: toField.value });
+  }
+
+  const fromField = dateField(el.rangeFrom, applyDates);
+  const toField = dateField(el.rangeTo, applyDates);
+
   function applyRange(next) {
     range = next;
     // Другое окно — другая история: возвращаемся к самым свежим записям.
@@ -947,23 +1272,9 @@
 
     // Первое открытие: «по сегодня» с открытым началом — вся история, что
     // есть. Уже введённые даты не затираем.
-    el.rangeTo.max = el.rangeFrom.max = siteToday();
-    if (!el.rangeFrom.value && !el.rangeTo.value) el.rangeTo.value = siteToday();
-    applyRange({ custom: true, from: el.rangeFrom.value, to: el.rangeTo.value });
+    if (!fromField.value && !toField.value) toField.value = siteToday();
+    applyRange({ custom: true, from: fromField.value, to: toField.value });
   });
-
-  // Поле зовёт change только на полную дату или на очистку — применяем сразу,
-  // отдельной кнопки «Показать» не нужно.
-  for (const input of [el.rangeFrom, el.rangeTo]) {
-    input.addEventListener('change', () => {
-      // Перевёрнутый период не ошибка: меняем границы местами, чтобы в полях
-      // стояло ровно то, что применилось.
-      if (el.rangeFrom.value && el.rangeTo.value && el.rangeFrom.value > el.rangeTo.value) {
-        [el.rangeFrom.value, el.rangeTo.value] = [el.rangeTo.value, el.rangeFrom.value];
-      }
-      applyRange({ custom: true, from: el.rangeFrom.value, to: el.rangeTo.value });
-    });
-  }
 
   // Якорь при смене размера оставляем: верхняя строка остаётся на виду,
   // читатель не теряет место в истории.
