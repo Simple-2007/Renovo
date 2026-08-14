@@ -22,39 +22,11 @@
   .tile { padding: 15px 16px 12px; }
   .tile .tile-head { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; }
 
-  /* Ручка перетаскивания. Проявляется по наведению и фокусу: постоянно
-     видимая, она спорит с числом за внимание, а карточка читается чаще,
-     чем переставляется. */
-  .tile .grip {
-    margin-left: auto; padding: 2px; flex: none; cursor: grab;
-    background: none; border: 0; border-radius: 6px; color: var(--ink-muted);
-    opacity: 0; transition: opacity .18s ease, background-color .18s ease;
-    touch-action: none;   /* иначе палец на ручке прокручивает страницу */
-  }
-  .tile:hover .grip, .tile .grip:focus-visible { opacity: 1; }
-  .tile .grip:hover { background: var(--hover); color: var(--ink); }
-  .tile .grip:active { cursor: grabbing; }
-  .tile .grip svg { display: block; width: 15px; height: 15px; fill: currentColor; }
-  /* На сенсорном экране наведения нет — ручка видна всегда. */
-  @media (hover: none) { .tile .grip { opacity: .6; } }
+  /* Карточку берут за любое место — отдельной ручки нет. Курсор
+     показывает это только тем, кому перестановка разрешена. */
+  .tiles.can-reorder .tile { cursor: grab; }
+  .tiles.can-reorder .tile:active { cursor: grabbing; }
 
-  /* Пока карточку несут, на её месте остаётся пустая ячейка: так видно,
-     куда она встанет. Сама карточка едет за курсором отдельной копией. */
-  .tile.dragging { border-style: dashed; background: var(--hover); }
-  .tile.dragging > * { visibility: hidden; }
-  /* Поднятая копия: приподнята тенью и чуть увеличена — «в руке». */
-  .tile-ghost {
-    position: fixed; left: 0; top: 0; margin: 0; z-index: 40;
-    pointer-events: none; will-change: transform;
-    box-shadow: 0 14px 34px rgba(0, 0, 0, .22);
-  }
-  body.dragging-tile { user-select: none; cursor: grabbing; }
-  /* Ключ серии — короткий штрих цвета линии, как на графике. */
-  .tile .key { width: 14px; height: 2px; border-radius: 1px; flex: none; }
-  .tile .name {
-    font-size: 13px; color: var(--ink-secondary); font-weight: 500;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
   .tile .value {
     font-size: 34px; font-weight: 650; line-height: 1.05; letter-spacing: -0.02em;
     display: flex; align-items: baseline; gap: 3px;
@@ -682,11 +654,14 @@
     });
   }
 
-  function bindDrag(tile, grip) {
-    grip.addEventListener('pointerdown', event => {
+  function bindDrag(tile) {
+    const node = tile.root;
+
+    node.addEventListener('pointerdown', event => {
+      if (!canReorder) return;                 // порядок общий, менять его не всем
       if (event.pointerType === 'mouse' && event.button !== 0) return;
       drag = {
-        tile: tile.root, pointerId: event.pointerId,
+        tile: node, pointerId: event.pointerId,
         x: event.clientX, y: event.clientY, started: false, timer: 0,
       };
       if (event.pointerType !== 'mouse') drag.timer = setTimeout(startDrag, 250);
@@ -694,18 +669,18 @@
 
     // С клавиатуры карточка ходит стрелками: перетаскивание мышью — не
     // единственный способ, иначе порядок недоступен без указателя.
-    grip.addEventListener('keydown', event => {
+    node.addEventListener('keydown', event => {
+      if (!canReorder) return;
       const back = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
       const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown';
       if (!back && !forward) return;
-      const node = tile.root;
       const sibling = back ? node.previousElementSibling : node.nextElementSibling;
       if (!sibling) return;
       event.preventDefault();
       if (back) el.tiles.insertBefore(node, sibling);
       else el.tiles.insertBefore(sibling, node);
       saveOrder();
-      grip.focus();
+      node.focus();
     });
   }
 
@@ -720,15 +695,7 @@
         const root = document.createElement('div');
         root.className = 'card tile';
         root.innerHTML =
-          `<div class="tile-head"><span class="key"></span><span class="name"></span>
-             <button type="button" class="grip" aria-label="Переставить карточку"
-                     title="Перетащите за ручку или переставьте стрелками">
-               <svg viewBox="0 0 16 16" aria-hidden="true">
-                 <circle cx="6" cy="4" r="1.3"/><circle cx="10" cy="4" r="1.3"/>
-                 <circle cx="6" cy="8" r="1.3"/><circle cx="10" cy="8" r="1.3"/>
-                 <circle cx="6" cy="12" r="1.3"/><circle cx="10" cy="12" r="1.3"/>
-               </svg>
-             </button></div>
+          `<div class="tile-head"><span class="key"></span><span class="name"></span></div>
            <div class="value"><span class="num">—</span><span class="unit"></span></div>
            <div class="meta"><span class="at"></span><span class="state"></span><span class="delta"></span></div>
            <div class="range"></div>
@@ -745,15 +712,11 @@
           delta: root.querySelector('.delta'),
           range: root.querySelector('.range'),
           spark: root.querySelector('.spark'),
-          grip: root.querySelector('.grip'),
         };
         root.dataset.key = s.key;
         tiles.set(s.key, tile);
-        bindDrag(tile, tile.grip);
+        bindDrag(tile);
       }
-
-      // Ручку показываем только тем, кто вправе менять общий порядок.
-      tile.grip.hidden = !canReorder;
 
       // Имя приходит извне — вставляем только текстом.
       tile.name.textContent = s.label;
@@ -1225,6 +1188,11 @@
       setZone(data.device.timezone);
       if (data.device.stale_after) staleSeconds = data.device.stale_after;
       canReorder = Boolean(data.can_reorder);
+      el.tiles.classList.toggle('can-reorder', canReorder);
+      for (const tile of tiles.values()) {
+        if (canReorder) tile.root.setAttribute('tabindex', '0');
+        else tile.root.removeAttribute('tabindex');
+      }
       lastSensors = data.sensors;
       renderTiles(data.sensors);
       applyServerOrder(data.sensors);
