@@ -12,6 +12,9 @@ from .models import Device, Reading, Sensor
 from .serializers import VALUE_MAX, VALUE_MIN, ReadingIngestSerializer
 
 MAX_BATCH = 500
+# Потолок произвольного периода. Нужен из-за открытой нижней границы: без него
+# запрос без «С» тянул бы всю историю разом.
+MAX_RANGE_DAYS = 92
 
 
 def _device_from_key(request) -> Device | None:
@@ -31,6 +34,44 @@ def _resolve_device(slug: str | None) -> Device:
     if device is None:
         raise Http404("Активных устройств нет")
     return device
+
+
+def _minutes_param(request) -> int:
+    """Окно пресетов: от минуты до недели, мусор в параметре — полчаса."""
+    try:
+        return min(max(int(request.query_params.get("minutes", 30)), 1), 60 * 24 * 7)
+    except (TypeError, ValueError):
+        return 30
+
+
+def _parse_day(value: str | None) -> dt.date | None:
+    try:
+        return dt.date.fromisoformat((value or "").strip())
+    except ValueError:
+        return None
+
+
+def _custom_range(request, tz, now) -> tuple[dt.datetime, dt.datetime | None]:
+    """Границы произвольного периода: целые сутки по часам площадки.
+
+    Пользователь выбирает даты такими, какими они подписаны на странице,
+    поэтому сутки режем по поясу площадки, а не по UTC и не по поясу зрителя.
+    Пустая граница — открытая: без «С» отдаём всё, что уместилось в потолок,
+    без «По» — по текущий момент.
+    """
+    start = _parse_day(request.query_params.get("from"))
+    end = _parse_day(request.query_params.get("to"))
+    if start and end and start > end:
+        start, end = end, start
+
+    since = dt.datetime.combine(start, dt.time.min, tzinfo=tz) if start else None
+    # Конец периода — включительно: «по 14.08» значит «по 14.08 23:59:59».
+    until = dt.datetime.combine(end + dt.timedelta(days=1), dt.time.min, tzinfo=tz) if end else None
+
+    floor = (until or now) - dt.timedelta(days=MAX_RANGE_DAYS)
+    if since is None or since < floor:
+        since = floor
+    return since, until
 
 
 class IngestView(APIView):
@@ -189,20 +230,35 @@ class LatestView(APIView):
 
 
 class SeriesView(APIView):
-    """GET /api/v1/series?minutes=30 — история по всем датчикам для графика."""
+    """GET /api/v1/series — история по всем датчикам для графика.
+
+    Два способа задать окно:
+
+    * `minutes=360` — последние N минут, для кнопок-пресетов;
+    * `period=custom&from=2026-08-13&to=2026-08-14` — произвольный период
+      целыми сутками по часам площадки. Любая из границ может отсутствовать:
+      пустое `from` — «всё до `to`», пустое `to` — «по сейчас».
+    """
 
     def get(self, request):
         device = _resolve_device(request.query_params.get("device"))
-        try:
-            minutes = min(max(int(request.query_params.get("minutes", 30)), 1), 60 * 24 * 7)
-        except ValueError:
-            minutes = 30
-        since = timezone.now() - dt.timedelta(minutes=minutes)
+        now = timezone.now()
+
+        if request.query_params.get("period") == "custom":
+            minutes = None
+            since, until = _custom_range(request, device.tzinfo, now)
+        else:
+            minutes = _minutes_param(request)
+            since, until = now - dt.timedelta(minutes=minutes), None
+
+        window = {"ts__gte": since}
+        if until is not None:
+            window["ts__lt"] = until
 
         series = []
         for sensor in device.sensors.filter(is_active=True):
             points = (
-                sensor.readings.filter(ts__gte=since)
+                sensor.readings.filter(**window)
                 .order_by("ts")
                 .values_list("ts", "value")
             )
@@ -223,6 +279,8 @@ class SeriesView(APIView):
                 "timezone": device.site_timezone,
             },
             "minutes": minutes,
+            "from": since.isoformat(),
+            "to": until.isoformat() if until is not None else None,
             "series": series,
         })
 

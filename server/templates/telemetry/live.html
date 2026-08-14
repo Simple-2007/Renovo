@@ -57,7 +57,6 @@
     display: flex; align-items: center; gap: 10px;
     flex-wrap: wrap; margin-bottom: 14px;
   }
-  .filters .label { font-size: 13px; color: var(--ink-muted); margin-right: 2px; }
   /* Без overflow: hidden — иначе он срезает кольцо фокуса у крайних кнопок.
      Скругление переносим на сами кнопки. */
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; }
@@ -72,6 +71,18 @@
   .seg button:last-child { border-right: 0; }
   .seg button:hover { background: var(--hover); color: var(--ink); }
   .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+  /* Поля произвольного периода. Пустая граница — открытая: без начала берём
+     всю доступную историю, без конца — по текущий момент. */
+  .range-fields { display: inline-flex; align-items: center; gap: 8px; }
+  /* display перебивает атрибут hidden — гасим явно, иначе поля видны всегда. */
+  .range-fields[hidden] { display: none; }
+  .range-fields input {
+    font: inherit; font-size: 13px; padding: 7px 10px;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .range-fields input:hover { background: var(--hover); }
+  .range-fields .dash { color: var(--ink-muted); }
   .ghost-btn {
     font: inherit; font-size: 13px; padding: 8px 14px; cursor: pointer;
     background: var(--surface); color: var(--ink-secondary);
@@ -190,6 +201,8 @@
     .ghost-btn { margin-left: 0; }
     .seg { width: 100%; }
     .seg button { flex: 1; padding: 9px 8px; }
+    .range-fields { width: 100%; }
+    .range-fields input { flex: 1; min-width: 0; }
     /* Узкий экран: номера уезжают на свою строку, счётчик и выбор — над ними. */
     .pager { display: flex; flex-wrap: wrap; justify-content: space-between; }
     .pages { order: 3; width: 100%; flex-wrap: wrap; }
@@ -211,12 +224,18 @@
   <div class="tiles" id="tiles"></div>
 
   <div class="filters">
-    <span class="label">Период</span>
     <div class="seg" id="ranges" role="group" aria-label="Период истории">
       <button type="button" data-minutes="60" aria-pressed="false">1 час</button>
       <button type="button" data-minutes="360" aria-pressed="true">6 часов</button>
       <button type="button" data-minutes="1440" aria-pressed="false">Сутки</button>
       <button type="button" data-minutes="10080" aria-pressed="false">Неделя</button>
+      <button type="button" data-range="custom" aria-pressed="false"
+              aria-expanded="false" aria-controls="range-fields">Период</button>
+    </div>
+    <div class="range-fields" id="range-fields" hidden>
+      <input type="date" id="range-from" aria-label="Начало периода">
+      <span class="dash" aria-hidden="true">—</span>
+      <input type="date" id="range-to" aria-label="Конец периода">
     </div>
     <button type="button" class="ghost-btn" id="table-toggle" aria-expanded="false">Показать таблицу</button>
   </div>
@@ -277,12 +296,20 @@
     tableHead: document.getElementById('table-head'),
     tableBody: document.getElementById('table-body'),
     tableToggle: document.getElementById('table-toggle'),
+    rangeFields: document.getElementById('range-fields'),
+    rangeFrom: document.getElementById('range-from'),
+    rangeTo: document.getElementById('range-to'),
     pageSize: document.getElementById('page-size'),
     pageCount: document.getElementById('page-count'),
     pages: document.getElementById('pages'),
   };
 
-  let minutes = 360;
+  // Окно истории: либо пресет { minutes }, либо произвольный период
+  // { custom: true, from, to } с датами ГГГГ-ММ-ДД по часам площадки.
+  // Пустая граница периода — открытая.
+  let range = { minutes: 360 };
+  let fromMs = -Infinity;       // нижняя граница окна, из ответа сервера
+  let live = true;              // окно доходит до «сейчас» — дописываем замеры
   let staleSeconds = 60;
   let chart = null;
   let series = [];              // последний ответ /series
@@ -582,6 +609,9 @@
     if (!total) {
       if (chart) { chart.destroy(); chart = null; }
       el.card.classList.add('no-data');
+      el.card.querySelector('.chart-empty').textContent = range.custom
+        ? 'За выбранный период данных нет'
+        : 'Данных пока нет — ждём первую запись от контроллера';
       el.legend.replaceChildren();
       return;
     }
@@ -628,7 +658,11 @@
             ticks: {
               color: css('--ink-muted'), padding: 8,
               font: { size: 11, family: css('--sans') },
-              callback: v => v + ' °C',
+              // На узком окне (час) разброс мал, и деления сами по себе
+              // приходят с четырьмя знаками: precision сажает их на шаг 0.1,
+              // а не просто округляет подпись — иначе соседние совпадут.
+              precision: 1,
+              callback: v => v.toFixed(1) + ' °C',
             },
           },
         },
@@ -673,14 +707,14 @@
   }
 
   function appendPoints(sensors) {
-    if (!chart) return;
-    const cutoff = Date.now() - minutes * 60 * 1000;
+    // Исторический период закрыт справа — свежие замеры в него не попадают.
+    if (!chart || !live) return;
     let changed = false;
 
     for (const s of sensors) {
       if (s.value === null || s.ts === lastTs.get(s.key)) continue;
       const index = series.findIndex(x => x.key === s.key);
-      if (index === -1) { loadSeries(minutes); return; }   // появился новый датчик
+      if (index === -1) { loadSeries(); return; }          // появился новый датчик
       series[index].points.push({ ts: s.ts, v: s.value });
       chart.data.datasets[index].data.push({ x: new Date(s.ts).getTime(), y: s.value });
       lastTs.set(s.key, s.ts);
@@ -689,10 +723,10 @@
     if (!changed) return;
 
     for (const line of series) {
-      while (line.points.length && new Date(line.points[0].ts).getTime() < cutoff) line.points.shift();
+      while (line.points.length && new Date(line.points[0].ts).getTime() < fromMs) line.points.shift();
     }
     chart.data.datasets.forEach(ds => {
-      while (ds.data.length && ds.data[0].x < cutoff) ds.data.shift();
+      while (ds.data.length && ds.data[0].x < fromMs) ds.data.shift();
     });
     chart.update('none');
     renderTable();
@@ -835,13 +869,27 @@
 
   /* ── Загрузка ────────────────────────────────────────────────────── */
 
-  async function loadSeries(m) {
+  // Параметры окна для API. Пустые границы не шлём вовсе: их отсутствие
+  // сервер и трактует как открытую границу.
+  function rangeQuery() {
+    if (!range.custom) return `minutes=${range.minutes}`;
+    const params = new URLSearchParams({ period: 'custom' });
+    if (range.from) params.set('from', range.from);
+    if (range.to) params.set('to', range.to);
+    return params.toString();
+  }
+
+  async function loadSeries() {
     el.card.classList.add('loading');   // держим прежний кадр, без скелета
     try {
-      const response = await fetch(`/api/v1/series?minutes=${m}`);
+      const response = await fetch(`/api/v1/series?${rangeQuery()}`);
       if (!response.ok) throw new Error('series ' + response.status);
       const payload = await response.json();
       setZone(payload.device.timezone);
+      // Границы берём из ответа, а не из своих полей: сервер мог поменять
+      // их местами и обрезать период по потолку.
+      fromMs = payload.from ? new Date(payload.from).getTime() : -Infinity;
+      live = !payload.to || new Date(payload.to).getTime() > Date.now();
       series = payload.series;
       buildChart();
       renderTable();
@@ -859,8 +907,8 @@
       if (data.device.stale_after) staleSeconds = data.device.stale_after;
       lastSensors = data.sensors;
       renderTiles(data.sensors);
-      if (!chart && data.sensors.some(s => s.value !== null)) {
-        loadSeries(minutes).catch(() => {});
+      if (!chart && live && data.sensors.some(s => s.value !== null)) {
+        loadSeries().catch(() => {});
       }
       appendPoints(data.sensors);
       setStatus(data.device.online ? 'online' : 'offline',
@@ -870,18 +918,52 @@
     }
   }
 
+  // Сегодняшняя дата по часам площадки: в полях должны стоять те же сутки,
+  // что подписаны на графике. Локаль en-CA даёт готовый формат ГГГГ-ММ-ДД.
+  const siteToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: siteZone }).format(new Date());
+
+  function applyRange(next) {
+    range = next;
+    // Другое окно — другая история: возвращаемся к самым свежим записям.
+    page = 0;
+    anchorTs = null;
+    loadSeries().catch(() => setStatus('offline', 'сервер недоступен'));
+  }
+
   document.getElementById('ranges').addEventListener('click', event => {
     const button = event.target.closest('button');
     if (!button) return;
     for (const b of event.currentTarget.querySelectorAll('button')) {
       b.setAttribute('aria-pressed', String(b === button));
     }
-    minutes = Number(button.dataset.minutes);
-    // Другой период — другая история: возвращаемся к самым свежим записям.
-    page = 0;
-    anchorTs = null;
-    loadSeries(minutes).catch(() => setStatus('offline', 'сервер недоступен'));
+
+    const custom = button.dataset.range === 'custom';
+    el.rangeFields.hidden = !custom;
+    button.setAttribute('aria-expanded', String(custom));
+    if (!custom) {
+      applyRange({ minutes: Number(button.dataset.minutes) });
+      return;
+    }
+
+    // Первое открытие: «по сегодня» с открытым началом — вся история, что
+    // есть. Уже введённые даты не затираем.
+    el.rangeTo.max = el.rangeFrom.max = siteToday();
+    if (!el.rangeFrom.value && !el.rangeTo.value) el.rangeTo.value = siteToday();
+    applyRange({ custom: true, from: el.rangeFrom.value, to: el.rangeTo.value });
   });
+
+  // Поле зовёт change только на полную дату или на очистку — применяем сразу,
+  // отдельной кнопки «Показать» не нужно.
+  for (const input of [el.rangeFrom, el.rangeTo]) {
+    input.addEventListener('change', () => {
+      // Перевёрнутый период не ошибка: меняем границы местами, чтобы в полях
+      // стояло ровно то, что применилось.
+      if (el.rangeFrom.value && el.rangeTo.value && el.rangeFrom.value > el.rangeTo.value) {
+        [el.rangeFrom.value, el.rangeTo.value] = [el.rangeTo.value, el.rangeFrom.value];
+      }
+      applyRange({ custom: true, from: el.rangeFrom.value, to: el.rangeTo.value });
+    });
+  }
 
   // Якорь при смене размера оставляем: верхняя строка остаётся на виду,
   // читатель не теряет место в истории.
@@ -910,7 +992,7 @@
     }
   });
 
-  loadSeries(minutes).catch(() => setStatus('offline', 'сервер недоступен'));
+  loadSeries().catch(() => setStatus('offline', 'сервер недоступен'));
   poll();
   setInterval(poll, POLL_MS);
 })();
