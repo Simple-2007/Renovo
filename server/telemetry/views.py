@@ -5,6 +5,8 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.authentication import SessionAuthentication
+from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -188,6 +190,10 @@ class WhoAmIView(APIView):
 class LatestView(APIView):
     """GET /api/v1/latest — последнее значение по каждому датчику."""
 
+    # Сессия нужна только чтобы узнать, показывать ли ручки перестановки:
+    # порядок общий для всех, и менять его вправе тот, кто вошёл в админку.
+    authentication_classes = [SessionAuthentication]
+
     def get(self, request):
         device = _resolve_device(request.query_params.get("device"))
         latest = (
@@ -225,6 +231,7 @@ class LatestView(APIView):
                 "timezone": device.site_timezone,
             },
             "server_time": timezone.now().isoformat(),
+            "can_reorder": bool(getattr(request.user, "is_staff", False)),
             "sensors": sensors,
         })
 
@@ -283,6 +290,44 @@ class SeriesView(APIView):
             "to": until.isoformat() if until is not None else None,
             "series": series,
         })
+
+
+class SensorOrderView(APIView):
+    """POST /api/v1/sensor-order — порядок датчиков устройства.
+
+    Порядок общий: он же виден в админке и на странице у всех читателей,
+    поэтому менять его вправе только сотрудник, вошедший в админку.
+    """
+
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        device = _resolve_device(request.data.get("device"))
+        keys = request.data.get("order")
+        if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+            return Response({"ok": False, "error": "Ожидается список ключей датчиков"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        sensors = {s.key: s for s in device.sensors.all()}
+        unknown = [k for k in keys if k not in sensors]
+        if unknown:
+            return Response({"ok": False, "error": f"Неизвестные датчики: {', '.join(unknown)}"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Номера раздаём по присланному списку, остальные датчики дописываем
+        # следом в прежнем порядке: список мог прийти неполным.
+        ordered = keys + [k for k in sensors if k not in keys]
+        changed = []
+        for position, key in enumerate(ordered):
+            sensor = sensors[key]
+            if sensor.order != position:
+                sensor.order = position
+                changed.append(sensor)
+        if changed:
+            Sensor.objects.bulk_update(changed, ["order"])
+
+        return Response({"ok": True, "order": ordered})
 
 
 def live_view(request):

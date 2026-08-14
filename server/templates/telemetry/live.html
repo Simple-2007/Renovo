@@ -308,6 +308,7 @@
 </div>
 
 {% if device %}
+  {% csrf_token %}
   <div class="tiles" id="tiles" data-device="{{ device.slug }}"></div>
 
   <div class="filters">
@@ -515,6 +516,17 @@
 
   /* ── Плитки ──────────────────────────────────────────────────────── */
 
+  // Порядок задаёт сервер. Двигаем узлы только при реальном расхождении:
+  // перенос узла сбрасывает фокус и рвёт наведение, а опрос идёт каждые
+  // несколько секунд.
+  function applyServerOrder(sensors) {
+    if (drag) return;                       // не спорим с рукой читателя
+    const desired = sensors.map(s => s.key).filter(key => tiles.has(key));
+    const current = [...el.tiles.children].map(node => node.dataset.key);
+    if (desired.join('|') === current.join('|')) return;
+    for (const key of desired) el.tiles.appendChild(tiles.get(key).root);
+  }
+
   function sparkline(points, color) {
     if (points.length < 2) return '';
     const values = points.map(p => p.v);
@@ -536,46 +548,30 @@
   }
 
   /* ── Порядок плиток: перетаскивание за ручку ─────────────────────────
-     Порядок у каждого читателя свой и живёт в его браузере: страница
-     публичная, и запись общего порядка в базу дала бы любому зрителю
-     переставлять карточки всем остальным. Порядок «по умолчанию» задаётся
-     в админке полем «порядок» у датчика. */
+     Порядок общий: он хранится у датчиков в базе, виден в админке и всем
+     читателям сразу. Менять его вправе тот, кто вошёл в админку, — иначе
+     любой зритель переставлял бы карточки всем остальным. */
 
-  const orderKey = `renovo-tiles-${el.tiles.dataset.device || 'default'}`;
-  let tileOrder = [];
-  try {
-    const saved = JSON.parse(localStorage.getItem(orderKey));
-    if (Array.isArray(saved)) tileOrder = saved.filter(key => typeof key === 'string');
-  } catch (e) { /* приватный режим или мусор в хранилище — порядок по умолчанию */ }
-
-  const rank = key => {
-    const index = tileOrder.indexOf(key);
-    // Незнакомый датчик — в конец. Не Infinity: разность двух Infinity даёт
-    // NaN, а компаратор, вернувший NaN, оставляет порядок на усмотрение
-    // движка — при первом заходе, когда неизвестны все ключи сразу.
-    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-  };
-
-  // Расставить существующие плитки по сохранённому порядку. Трогаем DOM
-  // только при реальном расхождении: перенос узла сбрасывает фокус и
-  // прерывает наведение, а renderTiles зовётся каждые несколько секунд.
-  function applyOrder() {
-    if (drag) return;                          // не спорим с рукой читателя
-    const keys = [...tiles.keys()];
-    const desired = keys.slice().sort((a, b) => rank(a) - rank(b) || keys.indexOf(a) - keys.indexOf(b));
-    const current = [...el.tiles.children].map(node => node.dataset.key);
-    if (desired.join('|') === current.join('|')) return;
-    for (const key of desired) el.tiles.appendChild(tiles.get(key).root);
-  }
+  let canReorder = false;
 
   function saveOrder() {
-    tileOrder = [...el.tiles.children].map(node => node.dataset.key);
-    try { localStorage.setItem(orderKey, JSON.stringify(tileOrder)); } catch (e) { /* приватный режим */ }
-    // Легенда и колонки таблицы идут следом за плитками: иначе на одной
+    const keys = [...el.tiles.children].map(node => node.dataset.key);
+    // Легенда и колонки таблицы идут следом за карточками: иначе на одной
     // странице оказалось бы два разных порядка одних и тех же датчиков.
-    series.sort((a, b) => rank(a.key) - rank(b.key));
+    series.sort((a, b) => keys.indexOf(a.key) - keys.indexOf(b.key));
     buildChart();
     renderTable();
+
+    const token = document.querySelector('input[name="csrfmiddlewaretoken"]');
+    fetch('/api/v1/sensor-order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token ? token.value : '' },
+      body: JSON.stringify({ device: el.tiles.dataset.device, order: keys }),
+    }).then(response => {
+      // Не сохранилось — говорим об этом: молча разъехавшийся порядок хуже
+      // отказа, читатель уйдёт с мыслью, что переставил.
+      if (!response.ok) setStatus('offline', 'порядок не сохранён');
+    }).catch(() => setStatus('offline', 'порядок не сохранён'));
   }
 
   let drag = null;   // { tile, pointerId, x, y, started, timer }
@@ -756,6 +752,9 @@
         bindDrag(tile, tile.grip);
       }
 
+      // Ручку показываем только тем, кто вправе менять общий порядок.
+      tile.grip.hidden = !canReorder;
+
       // Имя приходит извне — вставляем только текстом.
       tile.name.textContent = s.label;
       tile.name.title = s.label;
@@ -814,7 +813,6 @@
       }
     }
 
-    applyOrder();
   }
 
   /* ── Плагины графика ─────────────────────────────────────────────── */
@@ -1208,9 +1206,7 @@
       // их местами и обрезать период по потолку.
       fromMs = payload.from ? new Date(payload.from).getTime() : -Infinity;
       live = !payload.to || new Date(payload.to).getTime() > Date.now();
-      // Порядок читателя действует и здесь: иначе после перезагрузки плитки
-      // стоят по-своему, а легенда и колонки таблицы — по-серверному.
-      series = payload.series.sort((a, b) => rank(a.key) - rank(b.key));
+      series = payload.series;
       buildChart();
       renderTable();
       // Плитки считают разброс и изменение по этим же точкам — обновляем их
@@ -1228,8 +1224,10 @@
       const data = await response.json();
       setZone(data.device.timezone);
       if (data.device.stale_after) staleSeconds = data.device.stale_after;
+      canReorder = Boolean(data.can_reorder);
       lastSensors = data.sensors;
       renderTiles(data.sensors);
+      applyServerOrder(data.sensors);
       if (!chart && live && data.sensors.some(s => s.value !== null)) {
         loadSeries().catch(() => {});
       }
