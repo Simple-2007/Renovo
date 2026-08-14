@@ -64,7 +64,10 @@
   /* Состояние подписано словом: подкраска числа — подсказка, а не
      единственный носитель смысла. */
   .tile .state { font-weight: 600; }
-  /* Разброс за показанный период — подпись к спарклайну, стоит прямо над ним. */
+  /* Разброс за показанный период — подпись к спарклайну, стоит прямо над ним.
+     Края разведены по температуре: холодный край синим, жаркий красным. */
+  .tile .range .lo { color: var(--value-cold); }
+  .tile .range .hi { color: var(--value-hot); }
   .tile .range {
     margin-top: 5px; font-size: 12px; color: var(--ink-muted);
     font-variant-numeric: tabular-nums; white-space: nowrap;
@@ -829,7 +832,14 @@
           if (point.v < low) low = point.v;
           if (point.v > high) high = point.v;
         }
-        tile.range.textContent = `мин ${low.toFixed(1)} · макс ${high.toFixed(1)} ${s.unit}`;
+        const cold = document.createElement('span');
+        cold.className = 'lo';
+        cold.textContent = `мин ${low.toFixed(1)}`;
+        const hot = document.createElement('span');
+        hot.className = 'hi';
+        hot.textContent = `макс ${high.toFixed(1)}`;
+        tile.range.replaceChildren(cold, document.createTextNode(' · '), hot,
+                                   document.createTextNode(' ' + s.unit));
       } else {
         tile.delta.textContent = '';
         tile.range.textContent = '';
