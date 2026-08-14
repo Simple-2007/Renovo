@@ -1,0 +1,29 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Начало</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url 'admin:telemetry_device_changelist' %}">Устройства</a>
+  &rsaquo; <a href="{% url 'admin:telemetry_device_change' device.pk %}">{{ device.name }}</a>
+  &rsaquo; Перевыпуск ключа
+</div>
+{% endblock %}
+
+{% block content %}
+<p>Устройству <strong>{{ device.name }}</strong> будет выдан новый ключ API.</p>
+
+<ul>
+  <li><strong>Прежний ключ перестанет работать сразу же.</strong> Шлюз с ним
+      получит отказ и перестанет передавать замеры.</li>
+  <li>Новый ключ покажется <strong>один раз</strong> — на следующей странице.
+      Восстановить его потом неоткуда, только выпустить ещё один.</li>
+  <li>Новый ключ нужно прописать в <code>.env</code> шлюза как
+      <code>DEVICE_KEY</code> и перезапустить шлюз.</li>
+</ul>
+
+<form method="post">{% csrf_token %}
+  <input type="submit" value="Да, перевыпустить ключ" class="default">
+  <a href="{% url 'admin:telemetry_device_change' device.pk %}" class="button cancel-link">Отмена</a>
+</form>
+{% endblock %}

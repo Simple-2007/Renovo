@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Device, Reading, Sensor
+from .models import Device, Reading, Sensor, hash_api_key
 from .serializers import VALUE_MAX, VALUE_MIN, ReadingIngestSerializer
 
 MAX_BATCH = 500
@@ -20,11 +20,14 @@ MAX_RANGE_DAYS = 92
 
 
 def _device_from_key(request) -> Device | None:
-    """Аутентификация устройства по заголовку X-Device-Key."""
+    """Аутентификация устройства по заголовку X-Device-Key.
+
+    В базе лежит только отпечаток ключа, поэтому сверяем отпечатки.
+    """
     key = request.headers.get("X-Device-Key", "").strip()
     if not key:
         return None
-    return Device.objects.filter(api_key=key, is_active=True).first()
+    return Device.objects.filter(api_key_hash=hash_api_key(key), is_active=True).first()
 
 
 def _resolve_device(slug: str | None) -> Device:
@@ -126,7 +129,8 @@ class IngestView(APIView):
             if sensor is None:
                 next_order = Sensor.objects.filter(device=device).count()
                 sensor, _ = Sensor.objects.get_or_create(
-                    device=device, key=key, defaults={"order": next_order},
+                    device=device, key=key,
+                    defaults={"order": next_order, "slot": Sensor.free_slot(device)},
                 )
             sensors[key] = sensor
 

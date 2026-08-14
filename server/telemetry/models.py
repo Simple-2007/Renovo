@@ -1,3 +1,4 @@
+import hashlib
 import secrets
 from zoneinfo import ZoneInfo, available_timezones
 
@@ -16,12 +17,30 @@ def generate_api_key() -> str:
     return secrets.token_urlsafe(32)
 
 
+def hash_api_key(key: str) -> str:
+    """Отпечаток ключа для хранения в базе.
+
+    Соль не нужна и только мешала бы: ключ выдаём сами, он случайный на
+    256 бит, перебирать такой бессмысленно. Зато без соли отпечаток можно
+    искать по индексу, а не сверять перебором со всеми устройствами.
+    """
+    return hashlib.sha256(key.strip().encode()).hexdigest()
+
+
 class Device(models.Model):
     """Контроллер-источник данных (Arduino UNO через шлюз на ПК)."""
 
     name = models.CharField("название", max_length=100)
     slug = models.SlugField("код", max_length=50, unique=True)
-    api_key = models.CharField("ключ API", max_length=64, unique=True, default=generate_api_key)
+    # Самого ключа в базе нет: он показывается один раз при выпуске, дальше
+    # хранится только его отпечаток. Утечка дампа базы не даёт возможности
+    # слать замеры от имени устройства.
+    api_key_hash = models.CharField("отпечаток ключа", max_length=64, unique=True, editable=False)
+    api_key_prefix = models.CharField(
+        "начало ключа", max_length=12, blank=True, editable=False,
+        help_text="Первые символы — чтобы узнать ключ, не показывая его целиком.",
+    )
+    api_key_issued_at = models.DateTimeField("ключ выпущен", null=True, blank=True, editable=False)
     is_active = models.BooleanField("активно", default=True)
     # Пояс места, где стоят датчики. Время на сайте показывается именно в нём,
     # а не в поясе того, кто смотрит: смысл имеет связь температуры с местным
@@ -46,6 +65,19 @@ class Device(models.Model):
 
     def __str__(self):
         return self.name
+
+    def issue_api_key(self) -> str:
+        """Выдаёт новый ключ и запоминает только его отпечаток.
+
+        Возвращённую строку показывают владельцу один раз — восстановить её
+        потом неоткуда. Старый ключ перестаёт работать сразу же: сверяется
+        отпечаток, а он уже другой.
+        """
+        key = generate_api_key()
+        self.api_key_hash = hash_api_key(key)
+        self.api_key_prefix = key[:8]
+        self.api_key_issued_at = timezone.now()
+        return key
 
     def clean(self):
         if self.site_timezone not in available_timezones():
@@ -96,6 +128,10 @@ class Sensor(models.Model):
         help_text="Оставьте пустым — цвет назначится по палитре. HEX вида #2a78d6 переопределит его.",
     )
     order = models.PositiveIntegerField("порядок", default=0)
+    # Слот палитры закреплён за датчиком, а не за его местом в списке:
+    # иначе перестановка карточек перекрашивала бы линии на графике, и
+    # «синий» переставал бы означать один и тот же датчик.
+    slot = models.PositiveSmallIntegerField("слот палитры", default=1, editable=False)
     # Пороги подкраски значения на карточке. Ниже warn_above число набрано
     # обычным цветом; от warn_above к alarm_above оно плавно уходит в красный.
     # Пустые поля отключают подкраску: цвет без порога ничего не сообщает,
@@ -120,10 +156,18 @@ class Sensor(models.Model):
     def __str__(self):
         return self.label or self.key
 
-    @property
-    def slot(self) -> int:
-        """Номер слота палитры, 1..SERIES_SLOTS."""
-        return (self.order % SERIES_SLOTS) + 1
+    @staticmethod
+    def free_slot(device) -> int:
+        """Наименьший незанятый слот палитры, 1..SERIES_SLOTS.
+
+        Когда слоты кончились, начинаем круг заново: цвета повторятся, но
+        восьми датчиков на площадке пока не бывает.
+        """
+        taken = set(device.sensors.values_list("slot", flat=True))
+        for slot in range(1, SERIES_SLOTS + 1):
+            if slot not in taken:
+                return slot
+        return (device.sensors.count() % SERIES_SLOTS) + 1
 
     @property
     def display_name(self) -> str:

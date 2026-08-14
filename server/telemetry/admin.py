@@ -1,4 +1,7 @@
 from django.contrib import admin
+from django.http import Http404
+from django.template.response import TemplateResponse
+from django.urls import path, reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
@@ -48,8 +51,85 @@ class DeviceAdmin(admin.ModelAdmin):
     list_filter = ("is_active",)
     search_fields = ("name", "slug")
     prepopulated_fields = {"slug": ("name",)}
-    readonly_fields = ("api_key", "last_seen_at", "created_at")
+    readonly_fields = ("api_key_state", "last_seen_at", "created_at")
     inlines = [SensorInline]
+
+    def get_urls(self):
+        return [
+            path(
+                "<path:object_id>/rotate-key/",
+                self.admin_site.admin_view(self.rotate_key_view),
+                name="telemetry_device_rotate_key",
+            ),
+            *super().get_urls(),
+        ]
+
+    @admin.display(description="ключ API")
+    def api_key_state(self, obj):
+        """Ключа в базе нет — показываем начало и ссылку на перевыпуск."""
+        if obj is None or not obj.pk:
+            return "Ключ будет показан один раз после сохранения."
+        issued = obj.api_key_issued_at
+        when = f", выпущен {issued:%d.%m.%Y}" if issued else ""
+        return format_html(
+            '<span style="font-family:monospace">{}…</span>'
+            '<span style="color:#666"> — целиком показан только при выпуске{}</span><br>'
+            '<a class="button" style="margin-top:6px;display:inline-block" href="{}">'
+            "Перевыпустить ключ</a>",
+            obj.api_key_prefix or "—", when,
+            reverse("admin:telemetry_device_rotate_key", args=[obj.pk]),
+        )
+
+    def save_model(self, request, obj, form, change):
+        # Новое устройство сразу получает ключ: без него шлюзу не с чем идти.
+        # Показать его надо один раз, поэтому передаём в ответ отдельной
+        # страницей — см. response_add.
+        if not obj.api_key_hash:
+            self._issued_key = obj.issue_api_key()
+        super().save_model(request, obj, form, change)
+
+    def response_add(self, request, obj, post_url_continue=None):
+        key = getattr(self, "_issued_key", None)
+        self._issued_key = None
+        if key:
+            return self._key_page(request, obj, key)
+        return super().response_add(request, obj, post_url_continue)
+
+    def _key_page(self, request, device, key):
+        """Страница с только что выпущенным ключом.
+
+        Отдельной страницей, а не сообщением в шапке: ключ показывается
+        единственный раз, и его нужно успеть скопировать — в общей ленте
+        уведомлений он теряется среди прочего и пропадает при переходе.
+        """
+        return TemplateResponse(request, "admin/telemetry/device/key_issued.html", {
+            **self.admin_site.each_context(request),
+            "title": "Ключ API выпущен",
+            "device": device,
+            "api_key": key,
+            "opts": self.opts,
+        })
+
+    def rotate_key_view(self, request, object_id):
+        """Перевыпуск ключа. Старый перестаёт работать сразу же."""
+        device = self.get_object(request, object_id)
+        if device is None:
+            raise Http404("Устройство не найдено")
+        if not self.has_change_permission(request, device):
+            raise Http404("Нет прав на изменение устройства")
+
+        if request.method == "POST":
+            key = device.issue_api_key()
+            device.save(update_fields=["api_key_hash", "api_key_prefix", "api_key_issued_at"])
+            self.log_change(request, device, "Перевыпущен ключ API")
+            return self._key_page(request, device, key)
+
+        return TemplateResponse(request, "admin/telemetry/device/rotate_key.html", {
+            **self.admin_site.each_context(request),
+            "title": "Перевыпуск ключа API",
+            "device": device,
+            "opts": self.opts,
+        })
 
     @admin.display(description="состояние")
     def status(self, obj):

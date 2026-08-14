@@ -1,0 +1,74 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Начало</a>
+  &rsaquo; <a href="{% url 'admin:telemetry_device_changelist' %}">Устройства</a>
+  &rsaquo; <a href="{% url 'admin:telemetry_device_change' device.pk %}">{{ device.name }}</a>
+  &rsaquo; Ключ API
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+  /* Ключ — единственное, ради чего открыта страница: он и должен занимать
+     её центр, а не мелькать строкой уведомления в шапке. */
+  .key-card {
+    max-width: 720px; margin: 24px auto; padding: 24px 26px;
+    background: var(--body-bg, #fff); border: 1px solid var(--hairline-color, #e0e0e0);
+    border-left: 4px solid var(--error-fg, #ba2121); border-radius: 6px;
+  }
+  .key-card h2 { margin: 0 0 6px; font-size: 18px; }
+  .key-card .lead { margin: 0 0 18px; color: var(--body-quiet-color, #666); }
+  .key-value {
+    display: block; padding: 14px 16px; margin-bottom: 12px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 15px; word-break: break-all; user-select: all;
+    background: var(--darkened-bg, #f6f6f6); border: 1px solid var(--hairline-color, #e0e0e0);
+    border-radius: 4px;
+  }
+  .key-card .actions { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .key-card ul { margin: 0; color: var(--body-quiet-color, #666); }
+  #copy-state { font-size: 13px; color: var(--body-quiet-color, #666); }
+</style>
+
+<div class="key-card">
+  <h2>Ключ API для «{{ device.name }}»</h2>
+  <p class="lead">Показывается один раз. Скопируйте его сейчас — восстановить
+     ключ потом неоткуда, можно только выпустить новый.</p>
+
+  <code class="key-value" id="api-key">{{ api_key }}</code>
+
+  <div class="actions">
+    <button type="button" class="default" id="copy-key">Скопировать ключ</button>
+    <a class="button" href="{% url 'admin:telemetry_device_change' device.pk %}">Готово</a>
+    <span id="copy-state" role="status"></span>
+  </div>
+
+  <ul>
+    <li>Ключ прописывается в <code>.env</code> шлюза как <code>DEVICE_KEY</code>,
+        после чего шлюз нужно перезапустить.</li>
+    <li>Прежний ключ этого устройства уже не работает.</li>
+  </ul>
+</div>
+
+<script>
+  document.getElementById('copy-key').addEventListener('click', async () => {
+    const key = document.getElementById('api-key').textContent.trim();
+    const state = document.getElementById('copy-state');
+    try {
+      await navigator.clipboard.writeText(key);
+      state.textContent = 'Ключ скопирован в буфер обмена.';
+    } catch (e) {
+      // Буфер недоступен (не тот протокол или запрет) — выделяем, чтобы
+      // сработало обычное Ctrl+C.
+      const range = document.createRange();
+      range.selectNodeContents(document.getElementById('api-key'));
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      state.textContent = 'Ключ выделен — скопируйте его через Ctrl+C.';
+    }
+  });
+</script>
+{% endblock %}
