@@ -86,7 +86,7 @@
        привязок. Сначала так уезжала вниз высота (подложка налезала на
        разброс), потом — ширина (подложка не доходила до края карточки). */
     left: calc(-1 * var(--pad-x)); width: calc(100% + 2 * var(--pad-x));
-    top: -2px; height: calc(100% + 3px);
+    top: -2px; height: calc(100% + 2px);
   }
   .tile .value > span { position: relative; z-index: 1; }
   .tile .unit { font-size: 15px; font-weight: 500; color: var(--ink-secondary); }
@@ -124,10 +124,11 @@
   .tile .range .lo { color: var(--range-cold); }
   .tile .range .hi { color: var(--range-hot); }
   .tile .range .sep::after { content: ' · '; }
-  /* Отступ держит разброс ниже подложки: строка, проходящая по залитому
-     графику, читается хуже — и цифры, и сам ход температуры. */
+  /* Разброс стоит вплотную под значением — но с зазором от подложки:
+     строка, проходящая по залитому графику, читается хуже, и цифры, и сам
+     ход температуры. */
   .tile .range {
-    margin-top: 9px; font-size: 12px; color: var(--ink-muted);
+    margin-top: 5px; font-size: 12px; color: var(--ink-muted);
     font-variant-numeric: tabular-nums; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
   }
@@ -352,7 +353,7 @@
     .tile .unit { font-size: 12px; }
     .tile .meta, .tile .range { font-size: 10px; }
     .tile .meta { margin-top: 5px; gap: 2px 5px; }
-    .tile .range { margin-top: 7px; }
+    .tile .range { margin-top: 4px; }
     .tile .delta { font-size: 10px; padding: 1px 3px; }
     .tile .at { gap: 3px; }
     .tile .at-icon { width: 11px; height: 11px; }
