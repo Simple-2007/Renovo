@@ -1,7 +1,8 @@
 // Своя сборка ECharts для Renovo: только то, чем пользуется страница
 // мониторинга. Полный echarts.min.js весит около мегабайта; здесь линия,
-// сетка, подсказка и зум внутри области графика. Легенда своя, на кнопках,
-// поэтому LegendComponent не нужен.
+// сетка, подсказка, зум внутри области графика и раскладка подписей
+// (она разводит концевые подписи, когда линии сходятся). Легенда своя, на
+// кнопках, поэтому LegendComponent не нужен.
 //
 // Пересборка: npm i echarts esbuild && esbuild entry.js --bundle --minify
 //   --format=iife --target=es2019 --legal-comments=none
@@ -13,6 +14,7 @@ import {
   TooltipComponent,
   DataZoomInsideComponent,
 } from 'echarts/components';
+import { LabelLayout } from 'echarts/features';
 import { CanvasRenderer } from 'echarts/renderers';
 
 echarts.use([
@@ -20,6 +22,7 @@ echarts.use([
   GridComponent,
   TooltipComponent,
   DataZoomInsideComponent,
+  LabelLayout,
   CanvasRenderer,
 ]);
 
