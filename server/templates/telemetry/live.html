@@ -18,13 +18,8 @@
   /* ── Плитки текущих значений ───────────────────────────────────────── */
   .tiles {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
-    gap: 12px; margin-bottom: 10px;
+    gap: 12px; margin-bottom: 28px;
   }
-  /* Что означают края разброса и число справа, сказано один раз здесь, а не
-     подписью на каждой карточке. */
-  .tiles-note { margin: 0 0 26px; font-size: 12px; color: var(--ink-muted); }
-  .tiles-note .lo { color: var(--range-cold); font-weight: 600; }
-  .tiles-note .hi { color: var(--range-hot); font-weight: 600; }
   .tile { --pad-x: 14px; position: relative; padding: 15px var(--pad-x) 11px; overflow: hidden; }
   /* Полоса цвета датчика по верхнему краю: карточка опознаётся с расстояния,
      раньше, чем читается её имя. Обрезается скруглением самой карточки —
@@ -100,7 +95,7 @@
      значения: так число читается как надстрочная пометка к температуре, а не
      как ещё одна температура в ряду подписей. */
   .tile .delta {
-    align-self: flex-start; margin-left: 3px;
+    align-self: flex-start;
     font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums;
     padding: 1px 7px; border-radius: 999px;
     background: var(--hover); color: var(--ink-muted);
@@ -343,28 +338,27 @@
     /* Три карточки в ряд вместо двух: на 115 px помещается всё, если снять
        слова-подписи. На совсем узком экране колонок снова две. */
     .tiles { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 8px; margin-bottom: 18px; }
-    .tile { --pad-x: 9px; padding: 11px var(--pad-x) 8px; }
+    .tile { --pad-x: 8px; padding: 11px var(--pad-x) 8px; }
     .tile::before { height: 3px; }
     .tile .tile-head { gap: 5px; margin-bottom: 4px; }
     .tile .name { font-size: 12px; }
-    .tile .value { font-size: 23px; gap: 2px; }
+    .tile .value { font-size: 22px; gap: 0; }
     .tile .unit { font-size: 12px; }
     .tile .meta, .tile .range { font-size: 10px; }
     .tile .meta { margin-top: 5px; gap: 2px 5px; }
     .tile .range { margin-top: 5px; }
-    .tile .delta { font-size: 10px; padding: 1px 4px; margin-left: 1px; }
+    .tile .delta { font-size: 10px; padding: 1px 3px; }
     .tile .at { gap: 3px; }
     .tile .at-icon { width: 11px; height: 11px; }
-    /* Пояснение под сеткой на телефоне снимаем: лишняя строка под карточками
-       отодвигает вниз график — то самое, ради чего карточки и ужимались. */
-    .tiles-note { display: none; }
     /* Слова-подписи снимаем все разом: «min» и «max» у краёв разброса,
        повторное «°C» в баббле и «устарело» перед возрастом замера. Смысл
        остаётся в самих числах — меньшее слева, большее справа, а «34 мин
        назад» рядом с часами и так говорит, что замер несвежий (плюс
        штриховая рамка и приглушённый цвет всей карточки). */
     .tile .tag { display: none; }
-    .tile .range .sep::after { content: '–'; }
+    /* Тире здесь не годится: при минусовой температуре «18.7–−5.4» слипается
+       в нечитаемое, да и без минуса тире принимают за знак. Разделяем точкой
+       по центру — она ни с чем не путается. */
     .chart-box { height: 280px; }
     .filters { gap: 8px; }
     .ghost-btn { margin-left: 0; }
@@ -393,9 +387,6 @@
 {% if device %}
   {% csrf_token %}
   <div class="tiles" id="tiles" data-device="{{ device.slug }}"></div>
-  <p class="tiles-note">Подложка за значением — ход температуры за выбранный период,
-     баббл у значения — насколько оно за этот период изменилось, ниже
-     <span class="lo">min</span> и <span class="hi">max</span> за него же.</p>
 
   <div class="filters">
     <div class="seg" id="ranges" role="group" aria-label="Период истории">
@@ -627,6 +618,10 @@
     if (hours < 36) return `${Math.round(hours)} ч назад`;
     return `${Math.round(hours / 24)} сут назад`;
   }
+
+  // Одна десятая и настоящий минус вместо дефиса: «−30.7» в ряду табличных
+  // цифр читается как отрицательная температура, «-30.7» — как обрывок.
+  const fmt1 = value => value.toFixed(1).replace('-', '−');
 
   function setStatus(state, text) {
     el.status.className = 'badge ' + state;
@@ -924,7 +919,11 @@
       // Имя приходит извне — вставляем только текстом.
       tile.name.textContent = s.label;
       tile.name.title = s.label;
-      tile.unit.textContent = s.unit;
+      const degree = s.unit.startsWith('°') ? '°' : '';
+      const unitTail = document.createElement('span');
+      unitTail.className = 'tag';
+      unitTail.textContent = degree ? s.unit.slice(1) : s.unit;
+      tile.unit.replaceChildren(degree, unitTail);
       const stale = s.value !== null && s.age > staleSeconds;
       paintTile(tile, s, stale || s.value === null);
 
@@ -945,7 +944,7 @@
       // отсчитывать тревогу, у такого замера нет. Поэтому число набрано
       // обычным цветом, а пороги warn_above/alarm_above на карточке не
       // участвуют: подкраска без подписи была бы сигналом одним лишь цветом.
-      tile.num.textContent = s.value.toFixed(1);
+      tile.num.textContent = fmt1(s.value);
 
       if (stale) {
         const tag = document.createElement('span');
@@ -965,11 +964,14 @@
       const line = series.find(x => x.key === s.key);
       if (line && line.points.length > 1) {
         const diff = s.value - line.points[0].v;
-        const unit = document.createElement('span');
-        unit.className = 'tag';
-        unit.textContent = ' ' + s.unit;
+        // Единица в баббле разрезана так же: букву снимает узкая карточка,
+        // а градус остаётся при числе — без него «+1.9» в ряду с «24.6°»
+        // читается как ещё одно показание, а не как сдвиг.
+        const rest = document.createElement('span');
+        rest.className = 'tag';
+        rest.textContent = degree ? s.unit.slice(1) : s.unit;
         tile.delta.replaceChildren(
-          (diff >= 0 ? '+' : '−') + Math.abs(diff).toFixed(1), unit);
+          (diff >= 0 ? '+' : '−') + fmt1(Math.abs(diff)) + degree, rest);
 
         // Идём циклом, а не Math.min(...points): на недельном окне точек
         // десятки тысяч, и раскрытие их в аргументы упирается в предел стека.
@@ -988,10 +990,10 @@
         };
         const cold = document.createElement('span');
         cold.className = 'lo';
-        cold.append(tag('min '), low.toFixed(1));
+        cold.append(tag('min '), fmt1(low));
         const hot = document.createElement('span');
         hot.className = 'hi';
-        hot.append(tag('max '), high.toFixed(1));
+        hot.append(tag('max '), fmt1(high));
         const sep = document.createElement('span');
         sep.className = 'sep';
         tile.range.replaceChildren(cold, sep, hot, document.createTextNode(' ' + s.unit));
