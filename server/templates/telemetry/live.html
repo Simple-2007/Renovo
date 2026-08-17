@@ -345,7 +345,7 @@
     /* Три карточки в ряд вместо двух: на 115 px помещается всё, если снять
        слова-подписи. На совсем узком экране колонок снова две. */
     .tiles { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 8px; margin-bottom: 18px; }
-    .tile { --pad-x: 8px; padding: 11px var(--pad-x) 8px; }
+    .tile { --pad-x: 7px; padding: 11px var(--pad-x) 8px; }
     .tile::before { height: 3px; }
     .tile .tile-head { gap: 5px; margin-bottom: 4px; }
     .tile .name { font-size: 12px; }
@@ -975,13 +975,11 @@
       const line = series.find(x => x.key === s.key);
       if (line && line.points.length > 1) {
         const diff = s.value - line.points[0].v;
-        // Единица в баббле снимается на узкой карточке целиком: от показания
-        // рядом сдвиг отличает знак «+», а не повторённые градусы.
-        const unit = document.createElement('span');
-        unit.className = 'tag';
-        unit.textContent = ' ' + s.unit;
-        tile.delta.replaceChildren(
-          (diff >= 0 ? '+' : '−') + fmt1(Math.abs(diff)), unit);
+        // В баббле единица сокращена до знака градуса и на широком экране
+        // тоже: букву шкалы уже назвало значение слева, повторять её на
+        // пометке к нему незачем. Не-градусные единицы пишем целиком.
+        const mark = s.unit.startsWith('°') ? '°' : (s.unit ? ' ' + s.unit : '');
+        tile.delta.textContent = (diff >= 0 ? '+' : '−') + fmt1(Math.abs(diff)) + mark;
 
         // Идём циклом, а не Math.min(...points): на недельном окне точек
         // десятки тысяч, и раскрытие их в аргументы упирается в предел стека.
