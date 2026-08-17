@@ -257,8 +257,12 @@
     background: none; border: 0; padding: 6px 2px; cursor: pointer;
     transition: color .18s ease, opacity .18s ease;
   }
-  .legend button:hover { color: var(--ink); }
-  .legend .key { width: 16px; height: 2px; border-radius: 1px; flex: none; }
+  /* Знак и цвет подписи — те же, что на карточке датчика: легенда и карточки
+     называют одно и то же одинаково. Цвет линии на графике при этом чистый,
+     а подпись — приведённая к контрасту, как и на карточке. */
+  .legend .icon { display: inline-flex; flex: none; }
+  .legend .icon svg { width: 15px; height: 15px; fill: currentColor; }
+  .legend button:not(.off):hover { opacity: .75; }
   .legend button.off { opacity: .4; }
 
   /* Значение впереди, имя серии следом: серию читатель уже знает.
@@ -336,23 +340,31 @@
   .empty-state h2 { color: var(--ink); font-size: 17px; margin-bottom: 8px; }
 
   @media (max-width: 640px) {
-    .tiles { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 18px; }
-    .tile { --pad-x: 11px; padding: 12px var(--pad-x) 9px; }
+    /* Три карточки в ряд вместо двух: на 115 px помещается всё, если снять
+       слова-подписи. На совсем узком экране колонок снова две. */
+    .tiles { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 8px; margin-bottom: 18px; }
+    .tile { --pad-x: 9px; padding: 11px var(--pad-x) 8px; }
     .tile::before { height: 3px; }
-    .tile .tile-head { gap: 6px; margin-bottom: 4px; }
-    .tile .name { font-size: 13px; }
-    .tile .value { font-size: 26px; }
-    .tile .unit { font-size: 13px; }
-    .tile .meta, .tile .range { font-size: 11px; }
-    .tile .meta { margin-top: 6px; gap: 2px 6px; }
-    .tile .delta { font-size: 10px; padding: 1px 6px; }
-    /* Пояснение под сеткой на телефоне снимаем: «min» и «max» подписаны
-       прямо у своих чисел, а лишняя строка под карточками отодвигает вниз
-       график — то самое, ради чего карточки и ужимались. */
+    .tile .tile-head { gap: 5px; margin-bottom: 4px; }
+    .tile .name { font-size: 12px; }
+    .tile .value { font-size: 23px; gap: 2px; }
+    .tile .unit { font-size: 12px; }
+    .tile .meta, .tile .range { font-size: 10px; }
+    .tile .meta { margin-top: 5px; gap: 2px 5px; }
+    .tile .range { margin-top: 5px; }
+    .tile .delta { font-size: 10px; padding: 1px 4px; margin-left: 1px; }
+    .tile .at { gap: 3px; }
+    .tile .at-icon { width: 11px; height: 11px; }
+    /* Пояснение под сеткой на телефоне снимаем: лишняя строка под карточками
+       отодвигает вниз график — то самое, ради чего карточки и ужимались. */
     .tiles-note { display: none; }
-    /* Повторное «°C» у изменения за период убираем: единица уже названа
-       у самого значения. */
-    .tile .meta .tag { display: none; }
+    /* Слова-подписи снимаем все разом: «min» и «max» у краёв разброса,
+       повторное «°C» в баббле и «устарело» перед возрастом замера. Смысл
+       остаётся в самих числах — меньшее слева, большее справа, а «34 мин
+       назад» рядом с часами и так говорит, что замер несвежий (плюс
+       штриховая рамка и приглушённый цвет всей карточки). */
+    .tile .tag { display: none; }
+    .tile .range .sep::after { content: '–'; }
     .chart-box { height: 280px; }
     .filters { gap: 8px; }
     .ghost-btn { margin-left: 0; }
@@ -935,7 +947,14 @@
       // участвуют: подкраска без подписи была бы сигналом одним лишь цветом.
       tile.num.textContent = s.value.toFixed(1);
 
-      tile.atText.textContent = stale ? `устарело · ${ago(s.age)}` : fmtTime(s.ts);
+      if (stale) {
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = 'устарело · ';
+        tile.atText.replaceChildren(tag, ago(s.age));
+      } else {
+        tile.atText.textContent = fmtTime(s.ts);
+      }
       tile.at.title = fmtFull(s.ts);
       tile.root.classList.remove('no-data');
       tile.root.classList.toggle('stale', stale);
@@ -1166,14 +1185,16 @@
       button.className = off ? 'off' : '';
       button.setAttribute('aria-pressed', String(!off));
 
-      const key = document.createElement('span');
-      key.className = 'key';
-      key.style.background = off ? css('--ink-muted') : colorOf(s);
+      const icon = document.createElement('span');
+      icon.className = 'icon';
+      icon.innerHTML = SENSOR_ICONS[iconOf(s)] || SENSOR_ICONS.home;
+      icon.style.color = off ? css('--ink-muted') : colorOf(s);
 
       const name = document.createElement('span');
       name.textContent = s.label;
+      name.style.color = off ? css('--ink-muted') : readable(colorOf(s));
 
-      button.append(key, name);
+      button.append(icon, name);
       button.addEventListener('click', () => {
         if (hidden.has(s.key)) hidden.delete(s.key); else hidden.add(s.key);
         chart.setOption({ series: seriesData() });
