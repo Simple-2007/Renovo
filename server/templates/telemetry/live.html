@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}Мониторинг температуры — Renovo{% endblock %}
 
@@ -17,10 +18,33 @@
   /* ── Плитки текущих значений ───────────────────────────────────────── */
   .tiles {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
-    gap: 12px; margin-bottom: 28px;
+    gap: 12px; margin-bottom: 10px;
   }
-  .tile { padding: 15px 16px 12px; }
-  .tile .tile-head { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; }
+  /* Что означают края разброса и число справа, сказано один раз здесь, а не
+     подписью на каждой карточке. */
+  .tiles-note { margin: 0 0 26px; font-size: 12px; color: var(--ink-muted); }
+  .tiles-note .lo { color: var(--range-cold); font-weight: 600; }
+  .tiles-note .hi { color: var(--range-hot); font-weight: 600; }
+  .tile { --pad-x: 14px; position: relative; padding: 15px var(--pad-x) 11px; overflow: hidden; }
+  /* Полоса цвета датчика по верхнему краю: карточка опознаётся с расстояния,
+     раньше, чем читается её имя. Обрезается скруглением самой карточки —
+     ради этого у неё overflow: hidden. */
+  .tile::before {
+    content: ''; position: absolute; left: 0; right: 0; top: 0; height: 4px;
+    background: var(--tile-color, var(--border));
+  }
+  .tile .tile-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+  /* Знак места вместо цветного штриха. Цвет у знака тот же, что у линии
+     этого датчика на графике, — карточка и линия по-прежнему узнаются друг
+     в друге, но карточка теперь ещё и говорит, что за место. */
+  .tile .icon { display: inline-flex; flex: none; }
+  .tile .icon svg { width: 16px; height: 16px; fill: currentColor; }
+  /* Длинное имя обрезаем: перенос на вторую строку двигал бы вниз всё,
+     ради чего карточку и ужимали. Целиком имя остаётся в подсказке. */
+  .tile .name {
+    font-size: 14px; font-weight: 600; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 
   /* Карточку берут за любое место — отдельной ручки нет. Курсор
      показывает это только тем, кому перестановка разрешена. */
@@ -52,36 +76,67 @@
   body.dragging-tile { user-select: none; cursor: grabbing; }
 
   .tile .value {
-    font-size: 34px; font-weight: 650; line-height: 1.05; letter-spacing: -0.02em;
+    position: relative;
+    font-size: 32px; font-weight: 650; line-height: 1.05; letter-spacing: -0.02em;
     display: flex; align-items: baseline; gap: 3px;
   }
+  /* Ход температуры за период — фоном позади значения, во всю ширину
+     карточки (поля вычитаются отрицательными краями, лишнее срезает
+     overflow самой карточки). Вполголоса: это подложка, число поверх неё
+     остаётся главным и по контрасту не страдает — оно крупное и тёмное.  */
+  .tile .spark {
+    position: absolute; z-index: 0; pointer-events: none;
+    left: calc(-1 * var(--pad-x)); right: calc(-1 * var(--pad-x));
+    top: -2px; bottom: -9px; width: auto; height: auto;
+  }
+  .tile .value > span { position: relative; z-index: 1; }
   .tile .unit { font-size: 15px; font-weight: 500; color: var(--ink-secondary); }
   .tile .meta {
     display: flex; align-items: center; justify-content: space-between;
-    gap: 8px; margin-top: 8px; font-size: 12px; color: var(--ink-muted);
+    flex-wrap: wrap; gap: 3px 8px; margin-top: 5px;
+    font-size: 12px; color: var(--ink-muted);
   }
-  .tile .delta { font-variant-numeric: tabular-nums; }
-  /* Состояние подписано словом: подкраска числа — подсказка, а не
-     единственный носитель смысла. */
-  .tile .state { font-weight: 600; }
-  /* Разброс за показанный период — подпись к спарклайну, стоит прямо над ним.
-     Края разведены по температуре: холодный синим, жаркий красным, но
-     вполголоса — это дополнение к текущему значению, а не оно само. */
+  /* Изменение за период — приподнятым бабблом у правого верхнего угла
+     значения: так число читается как надстрочная пометка к температуре, а не
+     как ещё одна температура в ряду подписей. */
+  .tile .delta {
+    align-self: flex-start; margin-left: 3px;
+    font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums;
+    padding: 1px 7px; border-radius: 999px;
+    background: var(--hover); color: var(--ink-muted);
+  }
+  /* Пустое изменение — пустая строка: иначе от баббла осталась бы подложка. */
+  .tile .delta:empty { display: none; }
+  /* Часы у времени замера: в ряду мелких подписей иначе не отличить время
+     от прочих чисел. Там, где данных нет, часы снимаем — «нет данных» это
+     не время. */
+  .tile .at { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+  .tile .at-icon { width: 12px; height: 12px; flex: none; opacity: .8; }
+  .tile.no-data .at-icon { display: none; }
+  /* Слова-подписи и повторные «°C» — то, что снимается первым, когда
+     карточке становится тесно. Числа и цвета остаются. */
+  .tile .tag { white-space: pre; }
+
+  /* Разброс за показанный период стоит сразу под значением, время — под ним:
+     сверху вниз карточка читается как «сколько сейчас», «в каких пределах
+     ходило», «когда померено». Края разброса разведены по температуре:
+     холодный синим, жаркий красным, но вполголоса — это дополнение к
+     текущему значению, а не оно само. */
   .tile .range .lo { color: var(--range-cold); }
   .tile .range .hi { color: var(--range-hot); }
+  .tile .range .sep::after { content: ' · '; }
   .tile .range {
-    margin-top: 5px; font-size: 12px; color: var(--ink-muted);
+    margin-top: 6px; font-size: 12px; color: var(--ink-muted);
     font-variant-numeric: tabular-nums; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
   }
-  .tile .spark { display: block; width: 100%; height: 26px; margin-top: 6px; }
   .tile.no-data .value, .tile.stale .value { color: var(--ink-muted); }
   /* Прочерк в пустой плитке набирается обычным весом: при 650 он читается
      как жирная полоса, а не как «значения нет». */
   .tile.no-data .num { font-weight: 400; }
   .tile.no-data .unit { opacity: .5; }
-  .tile.no-data .spark { visibility: hidden; }
   .tile.no-data .range { visibility: hidden; }
+  .tile.no-data .spark { display: none; }
   /* Устаревшая плитка гасит не только число: сплошная заливка сменяется
      штриховой рамкой, чтобы состояние читалось и без цвета. */
   .tile.stale { border-style: dashed; }
@@ -189,7 +244,8 @@
     color: var(--ink-muted); font-size: 14px; text-align: center; padding: 20px;
   }
   .chart-card.no-data .chart-empty { display: flex; }
-  .chart-card.no-data canvas { visibility: hidden; }
+  .chart-card.no-data #chart { visibility: hidden; }
+  #chart { width: 100%; height: 100%; }
 
   .legend {
     display: flex; flex-wrap: wrap; gap: 8px 20px;
@@ -205,20 +261,20 @@
   .legend .key { width: 16px; height: 2px; border-radius: 1px; flex: none; }
   .legend button.off { opacity: .4; }
 
-  /* Значение впереди, имя серии следом: серию читатель уже знает. */
-  .tip {
-    position: absolute; pointer-events: none; opacity: 0;
-    transition: opacity .12s; z-index: 5; min-width: 170px;
-    background: var(--surface); border: 1px solid var(--border);
+  /* Значение впереди, имя серии следом: серию читатель уже знает.
+     Ставит подсказку на место сам ECharts, поэтому здесь только вид: у его
+     контейнера подложка и отступы сняты в настройках графика. */
+  .tip-box {
+    min-width: 170px; background: var(--surface); border: 1px solid var(--border);
     border-radius: 8px; padding: 9px 11px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, .12);
   }
-  .tip .tip-time { font-size: 12px; color: var(--ink-muted); margin-bottom: 6px; }
-  .tip .tip-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-  .tip .tip-row + .tip-row { margin-top: 3px; }
-  .tip .key { width: 12px; height: 2px; border-radius: 1px; flex: none; }
-  .tip .tip-val { font-weight: 650; font-variant-numeric: tabular-nums; color: var(--ink); }
-  .tip .tip-name { color: var(--ink-secondary); margin-left: auto; }
+  .tip-box .tip-time { font-size: 12px; color: var(--ink-muted); margin-bottom: 6px; }
+  .tip-box .tip-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .tip-box .tip-row + .tip-row { margin-top: 3px; }
+  .tip-box .key { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+  .tip-box .tip-val { font-weight: 650; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .tip-box .tip-name { color: var(--ink-secondary); margin-left: auto; }
 
   /* ── Табличный вид: те же значения без опоры на цвет ───────────────── */
   .table-wrap { margin-top: 18px; overflow-x: auto; }
@@ -280,8 +336,23 @@
   .empty-state h2 { color: var(--ink); font-size: 17px; margin-bottom: 8px; }
 
   @media (max-width: 640px) {
-    .tiles { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 10px; }
-    .tile .value { font-size: 28px; }
+    .tiles { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 18px; }
+    .tile { --pad-x: 11px; padding: 12px var(--pad-x) 9px; }
+    .tile::before { height: 3px; }
+    .tile .tile-head { gap: 6px; margin-bottom: 4px; }
+    .tile .name { font-size: 13px; }
+    .tile .value { font-size: 26px; }
+    .tile .unit { font-size: 13px; }
+    .tile .meta, .tile .range { font-size: 11px; }
+    .tile .meta { margin-top: 6px; gap: 2px 6px; }
+    .tile .delta { font-size: 10px; padding: 1px 6px; }
+    /* Пояснение под сеткой на телефоне снимаем: «min» и «max» подписаны
+       прямо у своих чисел, а лишняя строка под карточками отодвигает вниз
+       график — то самое, ради чего карточки и ужимались. */
+    .tiles-note { display: none; }
+    /* Повторное «°C» у изменения за период убираем: единица уже названа
+       у самого значения. */
+    .tile .meta .tag { display: none; }
     .chart-box { height: 280px; }
     .filters { gap: 8px; }
     .ghost-btn { margin-left: 0; }
@@ -310,6 +381,9 @@
 {% if device %}
   {% csrf_token %}
   <div class="tiles" id="tiles" data-device="{{ device.slug }}"></div>
+  <p class="tiles-note">Подложка за значением — ход температуры за выбранный период,
+     баббл у значения — насколько оно за этот период изменилось, ниже
+     <span class="lo">min</span> и <span class="hi">max</span> за него же.</p>
 
   <div class="filters">
     <div class="seg" id="ranges" role="group" aria-label="Период истории">
@@ -352,9 +426,8 @@
 
   <div class="card chart-card no-data" id="chart-card">
     <div class="chart-box">
-      <canvas id="chart"></canvas>
+      <div id="chart"></div>
       <div class="chart-empty">Данных пока нет — ждём первую запись от контроллера</div>
-      <div class="tip" id="tip"></div>
     </div>
     <div class="legend" id="legend"></div>
   </div>
@@ -389,7 +462,7 @@
 
 {% block scripts %}
 {% if device %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="{% static 'telemetry/echarts.custom.js' %}"></script>
 <script>
 (() => {
   const POLL_MS = 5000;
@@ -401,7 +474,6 @@
     statusText: document.getElementById('status-text'),
     card: document.getElementById('chart-card'),
     legend: document.getElementById('legend'),
-    tip: document.getElementById('tip'),
     tableWrap: document.getElementById('table-wrap'),
     tableHead: document.getElementById('table-head'),
     tableBody: document.getElementById('table-body'),
@@ -431,6 +503,19 @@
   let page = 0;                 // номер страницы, 0 — самые свежие записи
   let anchorTs = null;          // метка времени первой строки страницы (см. renderTable)
 
+  /* Знаки мест. Пока набор один на всех и выбирается по умолчанию; поле
+     выбора у датчика заведём в админке отдельно, и тогда сюда придёт готовое
+     имя знака. Рисуем заливкой, а не обводкой: в шапке карточки знак стоит
+     рядом с крупным числом и должен читаться так же плотно. */
+  const SENSOR_ICONS = {
+    home: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11.36 3.3a1 1 0 0 1 1.28 0l7.5 6.25a1 1 0 0 1 .36.77V19a2 2 0 0 1-2 2h-3.9v-5.2a1 1 0 0 0-1-1h-3.2a1 1 0 0 0-1 1V21H5.5a2 2 0 0 1-2-2v-8.68a1 1 0 0 1 .36-.77z"/></svg>',
+    pin: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2.4a6.6 6.6 0 0 0-6.6 6.6c0 4.7 5.7 11.6 6 11.9a.8.8 0 0 0 1.2 0c.3-.3 6-7.2 6-11.9A6.6 6.6 0 0 0 12 2.4Zm0 9.2a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Z"/></svg>',
+  };
+
+  // Знак датчика. Поля в базе ещё нет — до него берём то, что приходит с
+  // сервера, а если не приходит, дом: датчики стоят по помещениям.
+  const iconOf = s => s.icon || 'home';
+
   const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   // Цвет следует за датчиком, а не за его местом в списке: слот назначается
   // один раз при заведении, поэтому выключение серии никого не перекрашивает.
@@ -444,13 +529,35 @@
       .toString(16).padStart(2, '0')).join('');
   }
 
-  // Насколько значение продвинулось от «выше нормы» к «перегреву»: 0..1.
-  // Без обоих порогов подкраски нет — цвет без шкалы просто повторял бы число.
-  function heat(s) {
-    if (s.value === null || s.warn_above === null || s.alarm_above === null) return null;
-    const span = s.alarm_above - s.warn_above;
-    if (!(span > 0)) return null;
-    return Math.min(Math.max((s.value - s.warn_above) / span, 0), 1);
+  // Контраст к подложке по WCAG: относительная яркость и отношение
+  // (L1 + 0.05) / (L2 + 0.05).
+  function luminance(hex) {
+    const channels = [1, 3, 5]
+      .map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map(v => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  }
+
+  function contrast(one, two) {
+    const [light, dark] = [luminance(one), luminance(two)].sort((a, b) => b - a);
+    return (light + 0.05) / (dark + 0.05);
+  }
+
+  // Цвет датчика как текст. Слоты палитры подобраны под линии на графике, и
+  // светлые из них (янтарь, розовый) как подпись дают около 2:1 — читать
+  // такое имя нельзя. Подмешиваем основной цвет текста ровно настолько,
+  // чтобы взять 4.5:1: оттенок датчика при этом остаётся узнаваемым.
+  // Знак рядом красится чистым цветом — он графика, ему хватает 3:1, и по
+  // нему карточка сходится с линией и ртутью точь-в-точь.
+  function readable(color) {
+    const surface = css('--surface');
+    if (contrast(color, surface) >= 4.5) return color;
+    const ink = css('--ink');
+    for (let share = 0.1; share < 1; share += 0.1) {
+      const next = mix(color, ink, share);
+      if (contrast(next, surface) >= 4.5) return next;
+    }
+    return ink;
   }
 
   // Всё время на странице — по часам площадки, где стоят датчики, а не по
@@ -527,22 +634,35 @@
     for (const key of desired) el.tiles.appendChild(tiles.get(key).root);
   }
 
+  // Знак, ртуть в градуснике и линия на графике — одного цвета: это один и
+  // тот же датчик. Устаревшее показание гасит знак вместе с ртутью, чтобы
+  // карточка не выглядела живой.
+  // Ход температуры за период подложкой под значением. Заливка и линия идут
+  // вполголоса: подложка не должна спорить с числом, которое стоит поверх
+  // неё. Точек берём последние сорок — карточка показывает форму, а не
+  // значения, за ними график.
   function sparkline(points, color) {
     if (points.length < 2) return '';
     const values = points.map(p => p.v);
     const min = Math.min(...values), max = Math.max(...values);
     const span = (max - min) || 1;
     const step = 100 / (points.length - 1);
-    const d = values
-      .map((v, i) => `${i ? 'L' : 'M'}${(i * step).toFixed(2)},${(24 - ((v - min) / span) * 22).toFixed(2)}`)
+    const line = values
+      .map((v, i) => `${i ? 'L' : 'M'}${(i * step).toFixed(2)},${(24 - ((v - min) / span) * 20).toFixed(2)}`)
       .join(' ');
-    return `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.5"
+    return `<path d="${line} L100,26 L0,26 Z" fill="${color}" opacity=".10"/>
+            <path d="${line}" fill="none" stroke="${color}" stroke-width="1.5" opacity=".38"
              stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
   }
 
-  function paintTile(tile, s) {
-    const color = colorOf(s);
-    tile.key.style.background = color;
+  // Знак, имя, полоса по верху карточки и подложка — одного цвета, того же,
+  // которым идёт линия этого датчика на графике. Устаревшее и пустое
+  // показание гасит их разом, чтобы карточка не выглядела живой.
+  function paintTile(tile, s, dim) {
+    const color = dim ? css('--ink-muted') : colorOf(s);
+    tile.root.style.setProperty('--tile-color', color);
+    tile.icon.style.color = color;
+    tile.name.style.color = dim ? css('--ink-muted') : readable(colorOf(s));
     const line = series.find(x => x.key === s.key);
     tile.spark.innerHTML = line ? sparkline(line.points.slice(-40), color) : '';
   }
@@ -754,24 +874,36 @@
         const root = document.createElement('div');
         root.className = 'card tile';
         root.innerHTML =
-          `<div class="tile-head"><span class="key"></span><span class="name"></span></div>
-           <div class="value"><span class="num">—</span><span class="unit"></span></div>
-           <div class="meta"><span class="at"></span><span class="state"></span><span class="delta"></span></div>
+          `<div class="tile-head"><span class="icon"></span><span class="name"></span></div>
+           <div class="value">
+             <svg class="spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true"></svg>
+             <span class="num">—</span><span class="unit"></span><span class="delta"></span>
+           </div>
            <div class="range"></div>
-           <svg class="spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true"></svg>`;
+           <div class="meta">
+             <span class="at">
+               <svg class="at-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                 <circle cx="12" cy="12" r="9"/><path d="M12 6.8v5.4l3.4 2"/>
+               </svg><span class="at-text"></span>
+             </span>
+           </div>`;
         el.tiles.appendChild(root);
         tile = {
           root,
-          key: root.querySelector('.key'),
+          icon: root.querySelector('.icon'),
+          spark: root.querySelector('.spark'),
           name: root.querySelector('.name'),
           num: root.querySelector('.num'),
           unit: root.querySelector('.unit'),
           at: root.querySelector('.at'),
-          state: root.querySelector('.state'),
+          atText: root.querySelector('.at-text'),
           delta: root.querySelector('.delta'),
           range: root.querySelector('.range'),
-          spark: root.querySelector('.spark'),
         };
+        // Знак ставим один раз: он у датчика не меняется, а опрос идёт
+        // каждые несколько секунд.
+        tile.icon.innerHTML = SENSOR_ICONS[iconOf(s)] || SENSOR_ICONS.home;
         root.dataset.key = s.key;
         tiles.set(s.key, tile);
         bindDrag(tile);
@@ -781,15 +913,14 @@
       tile.name.textContent = s.label;
       tile.name.title = s.label;
       tile.unit.textContent = s.unit;
-      paintTile(tile, s);
+      const stale = s.value !== null && s.age > staleSeconds;
+      paintTile(tile, s, stale || s.value === null);
 
       if (s.value === null) {
         tile.num.textContent = '—';
-        tile.at.textContent = 'нет данных';
-        tile.state.textContent = '';
+        tile.atText.textContent = 'нет данных';
         tile.delta.textContent = '';
         tile.range.textContent = '';
-        tile.num.style.color = '';
         // Классы переключаем поштучно, а не переписываем строку целиком:
         // опрос идёт и во время переноса, а он стирал бы и «взятую»
         // карточку, и подсветку цели.
@@ -798,33 +929,28 @@
         continue;
       }
 
-      const stale = s.age > staleSeconds;
+      // Измеряем температуру в домах и на улице — «нормы», от которой можно
+      // отсчитывать тревогу, у такого замера нет. Поэтому число набрано
+      // обычным цветом, а пороги warn_above/alarm_above на карточке не
+      // участвуют: подкраска без подписи была бы сигналом одним лишь цветом.
       tile.num.textContent = s.value.toFixed(1);
 
-      // Устаревшее значение не подкрашиваем: тревога по старым данным
-      // хуже её отсутствия.
-      const t = stale ? null : heat(s);
-      if (t === null || t === 0) {
-        tile.num.style.color = '';
-        tile.state.textContent = '';
-      } else {
-        tile.num.style.color = mix(css('--ink'), css('--value-hot'), t);
-        tile.state.textContent = s.value >= s.alarm_above ? 'перегрев' : 'выше нормы';
-        tile.state.style.color = mix(css('--ink-muted'), css('--value-hot'), t);
-      }
-
-      tile.at.textContent = stale ? `устарело · ${ago(s.age)}` : fmtTime(s.ts);
+      tile.atText.textContent = stale ? `устарело · ${ago(s.age)}` : fmtTime(s.ts);
       tile.at.title = fmtFull(s.ts);
       tile.root.classList.remove('no-data');
       tile.root.classList.toggle('stale', stale);
 
       // Изменение и разброс за показанный период — по тем же точкам, что на
-      // графике. Цветом знак не кодируем: для температуры «вверх» не означает
-      // «хорошо».
+      // графике. Знак изменения цветом не кодируем: для температуры «вверх»
+      // не означает «хорошо».
       const line = series.find(x => x.key === s.key);
       if (line && line.points.length > 1) {
         const diff = s.value - line.points[0].v;
-        tile.delta.textContent = (diff >= 0 ? '+' : '−') + Math.abs(diff).toFixed(1) + ' °C';
+        const unit = document.createElement('span');
+        unit.className = 'tag';
+        unit.textContent = ' ' + s.unit;
+        tile.delta.replaceChildren(
+          (diff >= 0 ? '+' : '−') + Math.abs(diff).toFixed(1), unit);
 
         // Идём циклом, а не Math.min(...points): на недельном окне точек
         // десятки тысяч, и раскрытие их в аргументы упирается в предел стека.
@@ -833,14 +959,23 @@
           if (point.v < low) low = point.v;
           if (point.v > high) high = point.v;
         }
+        // Слова «min» и «max» — отдельными узлами: на узкой карточке их
+        // снимает CSS, а числа и их цвета остаются на месте.
+        const tag = text => {
+          const node = document.createElement('span');
+          node.className = 'tag';
+          node.textContent = text;
+          return node;
+        };
         const cold = document.createElement('span');
         cold.className = 'lo';
-        cold.textContent = `мин ${low.toFixed(1)}`;
+        cold.append(tag('min '), low.toFixed(1));
         const hot = document.createElement('span');
         hot.className = 'hi';
-        hot.textContent = `макс ${high.toFixed(1)}`;
-        tile.range.replaceChildren(cold, document.createTextNode(' · '), hot,
-                                   document.createTextNode(' ' + s.unit));
+        hot.append(tag('max '), high.toFixed(1));
+        const sep = document.createElement('span');
+        sep.className = 'sep';
+        tile.range.replaceChildren(cold, sep, hot, document.createTextNode(' ' + s.unit));
       } else {
         tile.delta.textContent = '';
         tile.range.textContent = '';
@@ -849,115 +984,151 @@
 
   }
 
-  /* ── Плагины графика ─────────────────────────────────────────────── */
+  /* ── График ──────────────────────────────────────────────────────────
+     ECharts, своя сборка из static/telemetry/echarts.custom.js (линия, сетка,
+     подсказка, зум внутри области — полный пакет весит вчетверо больше).
+     Переехали ради телефона: на недельном окне точек десятки тысяч, здесь их
+     прореживает сам движок, а период разводится щипком по графику. Нить у
+     курсора, точка и подпись на конце линии тоже встроенные — своих плагинов
+     под них больше не нужно. */
 
-  // Вертикальная нить: читатель целится в момент времени, а не в линию.
-  const crosshair = {
-    id: 'crosshair',
-    afterDatasetsDraw(c) {
-      const active = c.tooltip && c.tooltip.getActiveElements ? c.tooltip.getActiveElements() : [];
-      if (!active.length) return;
-      const x = active[0].element.x;
-      const ctx = c.ctx;
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(x, c.chartArea.top);
-      ctx.lineTo(x, c.chartArea.bottom);
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = css('--axis');
-      ctx.stroke();
-      ctx.restore();
-    },
-  };
+  // Разметка подсказки своя, поэтому у контейнера ECharts подложка и отступы
+  // сняты в настройках. Возвращаем узел, а не строку: имя датчика приходит
+  // извне, и собирать из него HTML нельзя.
+  function tooltipBox(points) {
+    const box = document.createElement('div');
+    box.className = 'tip-box';
 
-  // Точка и подпись на конце линии. Подпись — тот самый «рельеф», который
-  // снимает требование по контрасту светлых слотов палитры. Если подписи
-  // сходятся, лишние опускаем: их держит легенда, а стопка подписей
-  // отрывается от линий и читается как шум.
-  const endLabels = {
-    id: 'endLabels',
-    afterDatasetsDraw(c) {
-      const ctx = c.ctx;
-      const surface = css('--surface');
-      const placed = [];
-      ctx.save();
-      ctx.font = '600 12px ' + css('--sans');
-      ctx.textBaseline = 'middle';
-
-      c.data.datasets.forEach((ds, i) => {
-        if (!c.isDatasetVisible(i)) return;
-        const meta = c.getDatasetMeta(i);
-        const point = meta.data[meta.data.length - 1];
-        if (!point) return;
-
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, 4.5, 0, Math.PI * 2);
-        ctx.fillStyle = ds.borderColor;
-        ctx.fill();
-        ctx.lineWidth = 2;            // кольцо цветом подложки, а не обводка
-        ctx.strokeStyle = surface;
-        ctx.stroke();
-
-        const text = ds.label;
-        const width = ctx.measureText(text).width;
-        const x = point.x + 9;
-        if (x + width > c.width - 2) return;
-        if (placed.some(y => Math.abs(y - point.y) < 14)) return;
-
-        placed.push(point.y);
-        ctx.fillStyle = css('--ink-secondary');
-        ctx.fillText(text, x, point.y);
-      });
-      ctx.restore();
-    },
-  };
-
-  /* ── Подсказка ───────────────────────────────────────────────────── */
-
-  function externalTooltip(context) {
-    const { chart: c, tooltip } = context;
-    if (tooltip.opacity === 0) { el.tip.style.opacity = 0; return; }
-
-    el.tip.replaceChildren();
     const time = document.createElement('div');
     time.className = 'tip-time';
-    time.textContent = fmtFull(tooltip.dataPoints[0].parsed.x);
-    el.tip.appendChild(time);
+    time.textContent = fmtFull(points[0].value[0]);
+    box.appendChild(time);
 
-    for (const point of tooltip.dataPoints) {
+    for (const point of points) {
       const row = document.createElement('div');
       row.className = 'tip-row';
 
       const key = document.createElement('span');
       key.className = 'key';
-      key.style.background = point.dataset.borderColor;
+      key.style.background = point.color;
 
       const value = document.createElement('span');
       value.className = 'tip-val';
-      value.textContent = point.parsed.y.toFixed(1) + ' °C';
+      value.textContent = point.value[1].toFixed(1) + ' °C';
 
       const name = document.createElement('span');
       name.className = 'tip-name';
-      name.textContent = point.dataset.label;
+      name.textContent = point.seriesName;
 
       row.append(key, value, name);
-      el.tip.appendChild(row);
+      box.appendChild(row);
     }
-
-    const box = el.tip.getBoundingClientRect();
-    let left = tooltip.caretX + 14;
-    if (left + box.width > c.width) left = tooltip.caretX - box.width - 14;
-    el.tip.style.left = Math.max(0, left) + 'px';
-    el.tip.style.top = Math.min(Math.max(tooltip.caretY - box.height / 2, 0), c.height - box.height - 8) + 'px';
-    el.tip.style.opacity = 1;
+    return box;
   }
 
-  /* ── График ──────────────────────────────────────────────────────── */
+  // Выключенная через легенду серия отдаётся пустым набором: так пропадает и
+  // линия, и её концевая подпись, а место в наборе за датчиком сохраняется.
+  const pointsOf = s => hidden.has(s.key) ? [] : s.points.map(p => [new Date(p.ts).getTime(), p.v]);
+  const lastOf = data => data.length ? [data[data.length - 1]] : [];
+  // На каждый датчик идут две серии: сама линия и точка на её конце. Точку
+  // не получить включением символов у линии — тогда они появятся у всех
+  // тысяч замеров, — поэтому она отдельной серией из одного замера.
+  const seriesData = () => series.flatMap(s => {
+    const data = pointsOf(s);
+    return [{ data }, { data: lastOf(data) }];
+  });
+
+  function chartOption() {
+    const axis = css('--axis');
+    const grid = css('--grid');
+    const muted = css('--ink-muted');
+    const sans = css('--sans');
+
+    return {
+      animation: false,
+      // Справа оставлено место под концевые подписи; слева и снизу отступ
+      // добирает containLabel по фактической ширине делений.
+      grid: { left: 2, right: 62, top: 12, bottom: 2, containLabel: true },
+      xAxis: {
+        type: 'time',
+        axisLine: { lineStyle: { color: axis } },
+        axisTick: { show: false },
+        splitLine: { show: true, lineStyle: { color: grid } },
+        axisLabel: {
+          color: muted, fontSize: 11, fontFamily: sans,
+          hideOverlap: true, formatter: value => fmtTime(value),
+        },
+      },
+      yAxis: {
+        type: 'value',
+        scale: true,                       // не тянем ось к нулю: важен разброс
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { lineStyle: { color: grid } },
+        axisLabel: {
+          color: muted, fontSize: 11, fontFamily: sans,
+          formatter: value => value.toFixed(1) + ' °C',
+        },
+      },
+      tooltip: {
+        trigger: 'axis',
+        // Нить у курсора: читатель целится в момент времени, а не в линию.
+        axisPointer: { type: 'line', lineStyle: { color: axis, width: 1, type: 'solid' }, snap: true },
+        backgroundColor: 'transparent', borderWidth: 0, padding: 0,
+        extraCssText: 'box-shadow:none;',
+        formatter: tooltipBox,
+      },
+      dataZoom: [{
+        type: 'inside',
+        // Колесо и перетаскивание одним пальцем остаются странице: иначе
+        // график забирает себе прокрутку, стоит на него навести. Развести
+        // период можно щипком, а на мыши — колесом с Shift.
+        zoomOnMouseWheel: 'shift', moveOnMouseWheel: false, moveOnMouseMove: false,
+      }],
+      series: series.flatMap(s => {
+        const color = colorOf(s);
+        const data = pointsOf(s);
+        return [{
+          type: 'line',
+          name: s.label,
+          data,
+          showSymbol: false,
+          smooth: 0.25,
+          sampling: 'lttb',                // недельное окно рисуется по силуэту
+          lineStyle: { width: 2, color },
+          itemStyle: { color },
+          // Подпись на конце линии — тот самый «рельеф», который снимает
+          // требование по контрасту светлых слотов палитры.
+          endLabel: {
+            show: true, distance: 15, color: css('--ink-secondary'),
+            fontSize: 12, fontWeight: 600, fontFamily: sans,
+            formatter: point => point.seriesName,
+          },
+        }, {
+          // Точка на конце линии: кольцо цветом подложки, а не обводка.
+          // Из подсказки и наведения выключена — это тот же замер, что и
+          // последний в линии, и в списке он не должен появляться дважды.
+          type: 'line',
+          name: s.label,
+          data: lastOf(data),
+          showSymbol: true,
+          // По умолчанию у линии символ emptyCircle — он всегда с белой
+          // серединой, и точка выходила кольцом вместо заливки.
+          symbol: 'circle',
+          symbolSize: 9,
+          itemStyle: { color, borderColor: css('--surface'), borderWidth: 2 },
+          tooltip: { show: false },
+          silent: true,
+          z: 5,
+        }];
+      }),
+    };
+  }
 
   function buildChart() {
     const total = series.reduce((n, s) => n + s.points.length, 0);
     if (!total) {
-      if (chart) { chart.destroy(); chart = null; }
+      if (chart) { chart.dispose(); chart = null; }
       el.card.classList.add('no-data');
       el.card.querySelector('.chart-empty').textContent = range.custom
         ? 'За выбранный период данных нет'
@@ -967,71 +1138,28 @@
     }
     el.card.classList.remove('no-data');
 
-    const datasets = series.map(s => ({
-      label: s.label,
-      borderColor: colorOf(s),
-      data: s.points.map(p => ({ x: new Date(p.ts).getTime(), y: p.v })),
-      borderWidth: 2,
-      pointRadius: 0,
-      pointHitRadius: 0,
-      tension: 0.25,
-      hidden: hidden.has(s.key),
-    }));
     series.forEach(s => {
       if (s.points.length) lastTs.set(s.key, s.points[s.points.length - 1].ts);
     });
 
-    if (chart) chart.destroy();
-    chart = new Chart(document.getElementById('chart'), {
-      type: 'line',
-      data: { datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        layout: { padding: { right: 56, top: 10 } },   // место под концевые подписи
-        interaction: { mode: 'index', intersect: false, axis: 'x' },
-        scales: {
-          x: {
-            type: 'linear',
-            border: { color: css('--axis') },
-            grid: { color: css('--grid'), tickColor: 'transparent' },
-            ticks: {
-              color: css('--ink-muted'), maxRotation: 0, autoSkipPadding: 26,
-              font: { size: 11, family: css('--sans') },
-              callback: v => fmtTime(v),
-            },
-          },
-          y: {
-            border: { display: false },
-            grid: { color: css('--grid'), tickColor: 'transparent' },
-            ticks: {
-              color: css('--ink-muted'), padding: 8,
-              font: { size: 11, family: css('--sans') },
-              // На узком окне (час) разброс мал, и деления сами по себе
-              // приходят с четырьмя знаками: precision сажает их на шаг 0.1,
-              // а не просто округляет подпись — иначе соседние совпадут.
-              precision: 1,
-              callback: v => v.toFixed(1) + ' °C',
-            },
-          },
-        },
-        plugins: {
-          legend: { display: false },     // своя легенда: штрихи вместо квадратов
-          tooltip: { enabled: false, external: externalTooltip },
-        },
-      },
-      plugins: [crosshair, endLabels],
-    });
-
+    if (!chart) chart = echarts.init(document.getElementById('chart'));
+    // notMerge — состав серий и цвета темы могли смениться целиком. Заодно
+    // сбрасывается разведённый щипком период: под ним уже другие данные, и
+    // держать прежние границы было бы враньём.
+    chart.setOption(chartOption(), { notMerge: true });
     renderLegend();
   }
+
+  // Свой размер ECharts не отслеживает. Наблюдатель за коробкой графика ловит
+  // и изменение окна, и раскрытие таблицы под ним.
+  new ResizeObserver(() => { if (chart) chart.resize(); })
+    .observe(document.querySelector('.chart-box'));
 
   function renderLegend() {
     el.legend.replaceChildren();
     if (series.length < 2) return;       // одна серия — её называет заголовок
 
-    series.forEach((s, index) => {
+    for (const s of series) {
       const button = document.createElement('button');
       button.type = 'button';
       const off = hidden.has(s.key);
@@ -1048,12 +1176,11 @@
       button.append(key, name);
       button.addEventListener('click', () => {
         if (hidden.has(s.key)) hidden.delete(s.key); else hidden.add(s.key);
-        chart.setDatasetVisibility(index, !hidden.has(s.key));
-        chart.update();
+        chart.setOption({ series: seriesData() });
         renderLegend();
       });
       el.legend.appendChild(button);
-    });
+    }
   }
 
   function appendPoints(sensors) {
@@ -1066,7 +1193,6 @@
       const index = series.findIndex(x => x.key === s.key);
       if (index === -1) { loadSeries(); return; }          // появился новый датчик
       series[index].points.push({ ts: s.ts, v: s.value });
-      chart.data.datasets[index].data.push({ x: new Date(s.ts).getTime(), y: s.value });
       lastTs.set(s.key, s.ts);
       changed = true;
     }
@@ -1075,10 +1201,9 @@
     for (const line of series) {
       while (line.points.length && new Date(line.points[0].ts).getTime() < fromMs) line.points.shift();
     }
-    chart.data.datasets.forEach(ds => {
-      while (ds.data.length && ds.data[0].x < fromMs) ds.data.shift();
-    });
-    chart.update('none');
+    // Дописываем слиянием, а не пересборкой: график не мигает и не теряет
+    // разведённый щипком период.
+    chart.setOption({ series: seriesData() });
     renderTable();
   }
 
@@ -1581,12 +1706,9 @@
   window.addEventListener('renovo:themechange', () => {
     buildChart();
     renderTable();
-    lastSensors.forEach(s => { /* пересчёт подкраски под новую тему */ });
+    // Плитки перекрашиваются целиком: цвета подкраски и градусника взяты из
+    // токенов темы, а они только что сменились.
     if (lastSensors.length) renderTiles(lastSensors);
-    for (const [key, tile] of tiles) {
-      const s = series.find(x => x.key === key);
-      if (s) paintTile(tile, s);
-    }
   });
 
   loadSeries().catch(() => setStatus('offline', 'сервер недоступен'));
