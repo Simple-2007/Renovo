@@ -82,7 +82,10 @@
   .tile .spark {
     position: absolute; z-index: 0; pointer-events: none;
     left: calc(-1 * var(--pad-x)); right: calc(-1 * var(--pad-x));
-    top: -2px; bottom: -9px; width: auto; height: auto;
+    /* Высота задана явно: у svg это заменяемый элемент, и при height: auto
+       он берёт её из пропорции viewBox, а не из пары top/bottom — подложка
+       уезжала вниз тем сильнее, чем шире карточка, и налезала на разброс. */
+    top: -2px; height: calc(100% + 3px);
   }
   .tile .value > span { position: relative; z-index: 1; }
   .tile .unit { font-size: 15px; font-weight: 500; color: var(--ink-secondary); }
@@ -120,8 +123,10 @@
   .tile .range .lo { color: var(--range-cold); }
   .tile .range .hi { color: var(--range-hot); }
   .tile .range .sep::after { content: ' · '; }
+  /* Отступ держит разброс ниже подложки: строка, проходящая по залитому
+     графику, читается хуже — и цифры, и сам ход температуры. */
   .tile .range {
-    margin-top: 6px; font-size: 12px; color: var(--ink-muted);
+    margin-top: 9px; font-size: 12px; color: var(--ink-muted);
     font-variant-numeric: tabular-nums; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
   }
@@ -346,7 +351,7 @@
     .tile .unit { font-size: 12px; }
     .tile .meta, .tile .range { font-size: 10px; }
     .tile .meta { margin-top: 5px; gap: 2px 5px; }
-    .tile .range { margin-top: 5px; }
+    .tile .range { margin-top: 7px; }
     .tile .delta { font-size: 10px; padding: 1px 3px; }
     .tile .at { gap: 3px; }
     .tile .at-icon { width: 11px; height: 11px; }
