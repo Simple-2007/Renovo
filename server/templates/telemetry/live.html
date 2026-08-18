@@ -266,6 +266,9 @@
   .legend .icon svg { width: 15px; height: 15px; fill: currentColor; }
   .legend button:not(.off):hover { opacity: .75; }
   .legend button.off { opacity: .4; }
+  /* Датчику без данных нечего показывать и нечего выключать: курсор об этом
+     говорит, наведение его не подсвечивает. */
+  .legend button:disabled { cursor: default; }
 
   /* Значение впереди, имя серии следом: серию читатель уже знает.
      Ставит подсказку на место сам ECharts, поэтому здесь только вид: у его
@@ -1196,21 +1199,28 @@
     for (const s of series) {
       const button = document.createElement('button');
       button.type = 'button';
+      // Датчик без единого замера за период приглушён так же, как его
+      // карточка: цветное имя в легенде обещало бы линию, которой на графике
+      // нет. Выключать его нечем — кнопку гасим.
+      const empty = !s.points.length;
       const off = hidden.has(s.key);
-      button.className = off ? 'off' : '';
-      button.setAttribute('aria-pressed', String(!off));
+      button.className = empty || off ? 'off' : '';
+      button.disabled = empty;
+      if (empty) button.title = 'Нет данных за выбранный период';
+      else button.setAttribute('aria-pressed', String(!off));
 
+      const dim = empty || off;
       const icon = document.createElement('span');
       icon.className = 'icon';
       icon.innerHTML = SENSOR_ICONS[iconOf(s)] || SENSOR_ICONS.home;
-      icon.style.color = off ? css('--ink-muted') : colorOf(s);
+      icon.style.color = dim ? css('--ink-muted') : colorOf(s);
 
       const name = document.createElement('span');
       name.textContent = s.label;
-      name.style.color = off ? css('--ink-muted') : readable(colorOf(s));
+      name.style.color = dim ? css('--ink-muted') : readable(colorOf(s));
 
       button.append(icon, name);
-      button.addEventListener('click', () => {
+      if (!empty) button.addEventListener('click', () => {
         if (hidden.has(s.key)) hidden.delete(s.key); else hidden.add(s.key);
         chart.setOption({ series: seriesData() });
         renderLegend();
