@@ -1070,6 +1070,18 @@
     return [{ data }, { data: lastOf(data) }];
   });
 
+  // Имя файла картинки: устройство, показанный период и дата — чтобы в папке
+  // «Загрузки» было видно, что на снимке, не открывая его.
+  function stampForFile() {
+    const now = new Date();
+    const d = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
+      .map(n => String(n).padStart(2, '0')).join('-');
+    if (range.custom) return `${range.from || 'начало'}_${range.to || 'сейчас'}`;
+    const hours = range.minutes / 60;
+    const span = hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`;
+    return `${span}_${d}`;
+  }
+
   function chartOption() {
     const axis = css('--axis');
     const grid = css('--grid');
@@ -1080,7 +1092,7 @@
       animation: false,
       // Справа оставлено место под концевые подписи; слева и снизу отступ
       // добирает containLabel по фактической ширине делений.
-      grid: { left: 2, right: 62, top: 12, bottom: 2, containLabel: true },
+      grid: { left: 2, right: 62, top: 34, bottom: 2, containLabel: true },
       xAxis: {
         type: 'time',
         axisLine: { lineStyle: { color: axis } },
@@ -1114,9 +1126,36 @@
         type: 'inside',
         // Колесо и перетаскивание одним пальцем остаются странице: иначе
         // график забирает себе прокрутку, стоит на него навести. Развести
-        // период можно щипком, а на мыши — колесом с Shift.
+        // период можно щипком, а на мыши — колесом с Shift или рамкой из
+        // панели над графиком.
         zoomOnMouseWheel: 'shift', moveOnMouseWheel: false, moveOnMouseMove: false,
       }],
+      // Панель над графиком. Зум щипком и Shift+колесом работал и раньше, но
+      // об этом нельзя было догадаться — не было ни значка, ни способа
+      // вернуться к полному периоду.
+      toolbox: {
+        right: 6, top: 2, itemSize: 15, itemGap: 12,
+        iconStyle: { borderColor: muted, borderWidth: 1.4 },
+        emphasis: { iconStyle: { borderColor: css('--ink') } },
+        feature: {
+          dataZoom: {
+            // Ось значений рамкой не режем: у температуры смысл в том, где
+            // она относительно других, а не в растянутом куске шкалы.
+            yAxisIndex: 'none',
+            title: { zoom: 'Выделить период рамкой', back: 'Отменить последнее выделение' },
+          },
+          restore: { title: 'Показать период целиком' },
+          saveAsImage: {
+            title: 'Сохранить картинкой',
+            name: 'renovo-' + (el.tiles ? el.tiles.dataset.device : 'chart') + '-' + stampForFile(),
+            // Фон подставляем сам: без него PNG выходит прозрачным и в
+            // документе читается как чёрный.
+            backgroundColor: css('--surface'),
+            pixelRatio: 2,
+            excludeComponents: ['toolbox'],
+          },
+        },
+      },
       series: series.flatMap(s => {
         const color = colorOf(s);
         const data = pointsOf(s);
@@ -1179,7 +1218,14 @@
       if (s.points.length) lastTs.set(s.key, s.points[s.points.length - 1].ts);
     });
 
-    if (!chart) chart = echarts.init(document.getElementById('chart'));
+    if (!chart) {
+      chart = echarts.init(document.getElementById('chart'));
+      // «Показать период целиком» откатывает график к последней полной
+      // отрисовке — а в ней видны все серии. Выключенные через легенду при
+      // этом вернулись бы на график, оставшись погашенными в самой легенде:
+      // возвращаем их скрытыми, чтобы легенда и график не разошлись.
+      chart.on('restore', () => chart.setOption({ series: seriesData() }));
+    }
     // notMerge — состав серий и цвета темы могли смениться целиком. Заодно
     // сбрасывается разведённый щипком период: под ним уже другие данные, и
     // держать прежние границы было бы враньём.
