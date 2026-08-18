@@ -226,6 +226,20 @@
   }
   .cal-pick button:hover { background: var(--hover); }
   .cal-pick button.on { background: var(--ink); color: var(--surface); font-weight: 600; }
+  /* Выделенный рамкой отрезок — не то же самое, что кнопка периода рядом.
+     Пока он держится, на странице показаны его границы и способ вернуться:
+     без этого карточки считали бы одно окно, а кнопка называла другое. */
+  .zoom-note {
+    display: inline-flex; align-items: center; gap: 7px;
+    font: inherit; font-size: 13px; padding: 7px 10px 7px 12px; cursor: pointer;
+    background: var(--hover); color: var(--ink-secondary);
+    border: 1px solid var(--border); border-radius: 999px;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .zoom-note[hidden] { display: none; }
+  .zoom-note:hover { color: var(--ink); }
+  .zoom-note svg { width: 13px; height: 13px; opacity: .7; }
+
   .ghost-btn {
     font: inherit; font-size: 13px; padding: 8px 14px; cursor: pointer;
     background: var(--surface); color: var(--ink-secondary);
@@ -438,6 +452,11 @@
         <div class="cal-pop" hidden></div>
       </div>
     </div>
+    <button type="button" class="zoom-note" id="zoom-note" hidden>
+      <span id="zoom-text"></span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
     <button type="button" class="ghost-btn" id="table-toggle" aria-expanded="false">Показать таблицу</button>
   </div>
 
@@ -501,6 +520,8 @@
     pageSize: document.getElementById('page-size'),
     pageCount: document.getElementById('page-count'),
     pages: document.getElementById('pages'),
+    zoomNote: document.getElementById('zoom-note'),
+    zoomText: document.getElementById('zoom-text'),
   };
 
   // Окно истории: либо пресет { minutes }, либо произвольный период
@@ -519,6 +540,11 @@
   let pageSize = PAGE_SIZES[0]; // записей в таблице на страницу
   let page = 0;                 // номер страницы, 0 — самые свежие записи
   let anchorTs = null;          // метка времени первой строки страницы (см. renderTable)
+  // Отрезок, выделенный рамкой на графике: { from, to } в миллисекундах или
+  // null, когда показан весь загруженный период. Карточки и таблица считают
+  // по нему же — иначе на одном экране одно число говорило бы про сутки, а
+  // соседнее про выделенные два часа.
+  let zoomWindow = null;
 
   /* Знаки мест. Пока набор один на всех и выбирается по умолчанию; поле
      выбора у датчика заведём в админке отдельно, и тогда сюда придёт готовое
@@ -676,6 +702,22 @@
              stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
   }
 
+  // Точки серии внутри выделенного отрезка. Границы ищем двоичным поиском:
+  // на недельном окне точек тысячи, а пересчёт идёт на каждый шаг рамки.
+  function windowPoints(line) {
+    if (!zoomWindow || !line) return line ? line.points : [];
+    const at = i => new Date(line.points[i].ts).getTime();
+    const seek = target => {
+      let lo = 0, hi = line.points.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (at(mid) < target) lo = mid + 1; else hi = mid;
+      }
+      return lo;
+    };
+    return line.points.slice(seek(zoomWindow.from), seek(zoomWindow.to + 1));
+  }
+
   // Знак, имя, полоса по верху карточки и подложка — одного цвета, того же,
   // которым идёт линия этого датчика на графике. Устаревшее и пустое
   // показание гасит их разом, чтобы карточка не выглядела живой.
@@ -684,8 +726,8 @@
     tile.root.style.setProperty('--tile-color', color);
     tile.icon.style.color = color;
     tile.name.style.color = dim ? css('--ink-muted') : readable(colorOf(s));
-    const line = series.find(x => x.key === s.key);
-    tile.spark.innerHTML = line ? sparkline(line.points.slice(-40), color) : '';
+    const points = windowPoints(series.find(x => x.key === s.key));
+    tile.spark.innerHTML = points.length ? sparkline(points.slice(-40), color) : '';
   }
 
   /* ── Порядок плиток: перетаскивание за ручку ─────────────────────────
@@ -975,9 +1017,13 @@
       // Изменение и разброс за показанный период — по тем же точкам, что на
       // графике. Знак изменения цветом не кодируем: для температуры «вверх»
       // не означает «хорошо».
-      const line = series.find(x => x.key === s.key);
-      if (line && line.points.length > 1) {
-        const diff = s.value - line.points[0].v;
+      // Внутри выделения «изменение» считается от первой видимой точки до
+      // последней видимой, а не до текущего замера: текущий может лежать за
+      // границей отрезка, и тогда число говорило бы не о том, что показано.
+      const points = windowPoints(series.find(x => x.key === s.key));
+      if (points.length > 1) {
+        const last = zoomWindow ? points[points.length - 1].v : s.value;
+        const diff = last - points[0].v;
         // В баббле единица сокращена до знака градуса и на широком экране
         // тоже: букву шкалы уже назвало значение слева, повторять её на
         // пометке к нему незачем. Не-градусные единицы пишем целиком.
@@ -987,7 +1033,7 @@
         // Идём циклом, а не Math.min(...points): на недельном окне точек
         // десятки тысяч, и раскрытие их в аргументы упирается в предел стека.
         let low = Infinity, high = -Infinity;
-        for (const point of line.points) {
+        for (const point of points) {
           if (point.v < low) low = point.v;
           if (point.v > high) high = point.v;
         }
@@ -1225,12 +1271,47 @@
       // этом вернулись бы на график, оставшись погашенными в самой легенде:
       // возвращаем их скрытыми, чтобы легенда и график не разошлись.
       chart.on('restore', () => chart.setOption({ series: seriesData() }));
+      // Рамкой можно двигать и колесом, и щипком — событие одно на всех.
+      chart.on('dataZoom', syncZoomWindow);
     }
     // notMerge — состав серий и цвета темы могли смениться целиком. Заодно
     // сбрасывается разведённый щипком период: под ним уже другие данные, и
     // держать прежние границы было бы враньём.
     chart.setOption(chartOption(), { notMerge: true });
     renderLegend();
+  }
+
+  // Границы выделения берём у самой оси: в событии приходят проценты, а по
+  // ним нельзя надёжно восстановить время, когда опрос дописывает точки.
+  function syncZoomWindow() {
+    if (!chart) return;
+    const zoom = (chart.getOption().dataZoom || [])[0];
+    const whole = !zoom || (zoom.start <= 0.01 && zoom.end >= 99.99);
+    const axis = chart.getModel().getComponent('xAxis', 0).axis;
+    const [from, to] = axis.scale.getExtent();
+    const next = whole ? null : { from: Math.round(from), to: Math.round(to) };
+
+    const same = (!next && !zoomWindow)
+      || (next && zoomWindow && next.from === zoomWindow.from && next.to === zoomWindow.to);
+    if (same) return;
+
+    zoomWindow = next;
+    showZoomNote();
+    // Показанные записи сменились — таблица начинается сначала.
+    page = 0;
+    anchorTs = null;
+    if (lastSensors.length) renderTiles(lastSensors);
+    renderTable();
+  }
+
+  function showZoomNote() {
+    if (!el.zoomNote) return;
+    el.zoomNote.hidden = !zoomWindow;
+    if (!zoomWindow) return;
+    const sameDay = new Date(zoomWindow.from).toDateString() === new Date(zoomWindow.to).toDateString();
+    const edge = ts => sameDay ? fmtTime(ts) : fmtFull(ts);
+    el.zoomText.textContent = `выделено ${edge(zoomWindow.from)} — ${edge(zoomWindow.to)}`;
+    el.zoomNote.title = 'Показать выбранный период целиком';
   }
 
   // Свой размер ECharts не отслеживает. Наблюдатель за коробкой графика ловит
@@ -1392,7 +1473,7 @@
     // потому что приходят одним пакетом.
     const rows = new Map();
     series.forEach((s, column) => {
-      for (const point of s.points) {
+      for (const point of windowPoints(s)) {
         if (!rows.has(point.ts)) rows.set(point.ts, new Array(series.length).fill(null));
         rows.get(point.ts)[column] = point.v;
       }
@@ -1752,6 +1833,9 @@
 
   function applyRange(next) {
     range = next;
+    // Другая история — другое окно: выделение внутри прежнего теряет смысл.
+    zoomWindow = null;
+    showZoomNote();
     // Другое окно — другая история: возвращаемся к самым свежим записям.
     page = 0;
     anchorTs = null;
@@ -1801,6 +1885,10 @@
     // Плитки перекрашиваются целиком: цвета подкраски и градусника взяты из
     // токенов темы, а они только что сменились.
     if (lastSensors.length) renderTiles(lastSensors);
+  });
+
+  el.zoomNote.addEventListener('click', () => {
+    if (chart) chart.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
   });
 
   loadSeries().catch(() => setStatus('offline', 'сервер недоступен'));
