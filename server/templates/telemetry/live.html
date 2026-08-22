@@ -535,6 +535,7 @@
   let series = [];              // последний ответ /series
   const tiles = new Map();      // key -> узлы плитки
   const lastTs = new Map();     // key -> ISO последней точки
+  let refilledAt = 0;           // когда в последний раз добирали пропуск (см. appendPoints)
   const hidden = new Set();     // серии, выключенные через легенду
   let lastSensors = [];         // последний ответ /latest — для перерисовки при смене темы
   let pageSize = PAGE_SIZES[0]; // записей в таблице на страницу
@@ -1362,6 +1363,12 @@
     }
   }
 
+  // Нижняя граница окна. У пресета она едет за «сейчас»: на открытой вкладке
+  // замеры дописываются часами, и держись мы границы из ответа сервера,
+  // «последние сутки» через сутки превратились бы в двое.
+  const windowStart = () =>
+    range.custom ? fromMs : Date.now() - range.minutes * 60000;
+
   function appendPoints(sensors) {
     // Исторический период закрыт справа — свежие замеры в него не попадают.
     if (!chart || !live) return;
@@ -1370,15 +1377,31 @@
     for (const s of sensors) {
       if (s.value === null || s.ts === lastTs.get(s.key)) continue;
       const index = series.findIndex(x => x.key === s.key);
-      if (index === -1) { loadSeries(); return; }          // появился новый датчик
+      if (index === -1) { loadSeries().catch(() => {}); return; }   // появился новый датчик
+      // Между нашей последней точкой и свежей — больше, чем контроллер молчит
+      // в норме. Значит, опрос стоял: вкладку заморозили, машина спала или
+      // пропала сеть, а замеры на сервере всё это время копились. Дописать
+      // сюда одну точку — провести через весь пропуск линию, которой не было;
+      // забираем период целиком.
+      // Чаще раза в полминуты не дёргаем: интервал замеров в карточке
+      // устройства мог оказаться занижен, и тогда «пропуском» выглядел бы
+      // каждый обычный замер — вкладка молотила бы период по кругу.
+      const previous = lastTs.get(s.key);
+      if (previous && new Date(s.ts) - new Date(previous) > staleSeconds * 1000
+          && Date.now() - refilledAt > 30000) {
+        refilledAt = Date.now();
+        loadSeries().catch(() => {});
+        return;
+      }
       series[index].points.push({ ts: s.ts, v: s.value });
       lastTs.set(s.key, s.ts);
       changed = true;
     }
     if (!changed) return;
 
+    const start = windowStart();
     for (const line of series) {
-      while (line.points.length && new Date(line.points[0].ts).getTime() < fromMs) line.points.shift();
+      while (line.points.length && new Date(line.points[0].ts).getTime() < start) line.points.shift();
     }
     // Дописываем слиянием, а не пересборкой: график не мигает и не теряет
     // разведённый щипком период.
