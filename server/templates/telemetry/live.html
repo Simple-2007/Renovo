@@ -535,7 +535,9 @@
   let series = [];              // последний ответ /series
   const tiles = new Map();      // key -> узлы плитки
   const lastTs = new Map();     // key -> ISO последней точки
-  let refilledAt = 0;           // когда в последний раз добирали пропуск (см. appendPoints)
+  let reloadedAt = 0;           // когда последний раз перечитывали период целиком
+  let wasOnline = null;         // связь на прошлом опросе — ловим возвращение
+  let healUntil = 0;            // до какого времени ждём дозаливку буфера
   const hidden = new Set();     // серии, выключенные через легенду
   let lastSensors = [];         // последний ответ /latest — для перерисовки при смене темы
   let pageSize = PAGE_SIZES[0]; // записей в таблице на страницу
@@ -1078,12 +1080,17 @@
     const box = document.createElement('div');
     box.className = 'tip-box';
 
+    // В разрыве связи у серии стоит пустое значение — показывать по нему
+    // нечего. Курсор в дыре не должен выдавать пустую рамку с временем.
+    const measured = points.filter(p => p.value[1] !== null && p.value[1] !== undefined);
+    if (!measured.length) return '';
+
     const time = document.createElement('div');
     time.className = 'tip-time';
-    time.textContent = fmtFull(points[0].value[0]);
+    time.textContent = fmtFull(measured[0].value[0]);
     box.appendChild(time);
 
-    for (const point of points) {
+    for (const point of measured) {
       const row = document.createElement('div');
       row.className = 'tip-row';
 
@@ -1105,9 +1112,50 @@
     return box;
   }
 
+  // Насколько замеры могут разойтись во времени, прежде чем это станет
+  // перерывом в связи, а не обычным разбросом.
+  //
+  // Меру берём у самих данных, а не только из карточки устройства: занижённый
+  // там интервал замеров рвал бы линию после каждой точки, и от графика не
+  // осталось бы ничего. Считаем по 95-му проценту шага — если интервал опроса
+  // когда-то меняли, медиана осталась бы у частого участка и весь редкий
+  // рассыпался бы на куски. Ниже порога «контроллер офлайн» не опускаемся:
+  // раньше этого срока молчание вообще не считается потерей связи.
+  let gapMs = 60000;
+  function measureGap() {
+    const steps = [];
+    for (const line of series) {
+      for (let i = 1; i < line.points.length; i++) {
+        steps.push(new Date(line.points[i].ts) - new Date(line.points[i - 1].ts));
+      }
+    }
+    steps.sort((a, b) => a - b);
+    const usual = steps.length ? steps[Math.floor(steps.length * 0.95)] : 0;
+    gapMs = Math.max(staleSeconds * 1000, usual * 2);
+  }
+
+  const hasGap = line => line.points.some((p, i) =>
+    i > 0 && new Date(p.ts) - new Date(line.points[i - 1].ts) > gapMs);
+
   // Выключенная через легенду серия отдаётся пустым набором: так пропадает и
   // линия, и её концевая подпись, а место в наборе за датчиком сохраняется.
-  const pointsOf = s => hidden.has(s.key) ? [] : s.points.map(p => [new Date(p.ts).getTime(), p.v]);
+  //
+  // В перерыв связи ставим пустое значение: линия рвётся там, где замеров не
+  // было, вместо прямой через весь пропуск. Разрыв считается по самим точкам
+  // на каждой отрисовке, поэтому дозалитый позже буфер контроллера закроет
+  // дыру сам — помечать её нечем и стирать потом нечего.
+  const pointsOf = s => {
+    if (hidden.has(s.key)) return [];
+    const out = [];
+    let prev = null;
+    for (const point of s.points) {
+      const ts = new Date(point.ts).getTime();
+      if (prev !== null && ts - prev > gapMs) out.push([prev + 1, null]);
+      out.push([ts, point.v]);
+      prev = ts;
+    }
+    return out;
+  };
   const lastOf = data => data.length ? [data[data.length - 1]] : [];
   // На каждый датчик идут две серии: сама линия и точка на её конце. Точку
   // не получить включением символов у линии — тогда они появятся у всех
@@ -1388,9 +1436,8 @@
       // каждый обычный замер — вкладка молотила бы период по кругу.
       const previous = lastTs.get(s.key);
       if (previous && new Date(s.ts) - new Date(previous) > staleSeconds * 1000
-          && Date.now() - refilledAt > 30000) {
-        refilledAt = Date.now();
-        loadSeries().catch(() => {});
+          && Date.now() - reloadedAt > 30000) {
+        loadSeries({ quiet: true }).catch(() => {});
         return;
       }
       series[index].points.push({ ts: s.ts, v: s.value });
@@ -1556,7 +1603,10 @@
     return params.toString();
   }
 
-  async function loadSeries() {
+  // quiet — обновление, которого читатель не просил (дозаливка буфера после
+  // возвращения связи). Такое не пересобирает график: иначе с него слетел бы
+  // разведённый щипком период, а выключенные в легенде серии вернулись бы.
+  async function loadSeries({ quiet = false } = {}) {
     el.card.classList.add('loading');   // держим прежний кадр, без скелета
     try {
       const response = await fetch(`/api/v1/series?${rangeQuery()}`);
@@ -1567,8 +1617,24 @@
       // их местами и обрезать период по потолку.
       fromMs = payload.from ? new Date(payload.from).getTime() : -Infinity;
       live = !payload.to || new Date(payload.to).getTime() > Date.now();
+      reloadedAt = Date.now();
+      const keysBefore = series.map(x => x.key).join();
+      const countBefore = series.reduce((n, x) => n + x.points.length, 0);
       series = payload.series;
-      buildChart();
+      measureGap();
+      // Точек стало больше, чем было, — буфер и правда доливается. Ждём
+      // следующую порцию: дамп за долгий обрыв связи одним куском не придёт.
+      if (quiet && series.reduce((n, x) => n + x.points.length, 0) > countBefore) {
+        healUntil = Date.now() + 10 * 60000;
+      }
+      if (quiet && chart && series.map(x => x.key).join() === keysBefore) {
+        series.forEach(x => {
+          if (x.points.length) lastTs.set(x.key, x.points[x.points.length - 1].ts);
+        });
+        chart.setOption({ series: seriesData() });
+      } else {
+        buildChart();
+      }
       renderTable();
       // Плитки считают разброс и изменение по этим же точкам — обновляем их
       // сразу, иначе цифры отстают от графика до следующего опроса.
@@ -1576,6 +1642,16 @@
     } finally {
       el.card.classList.remove('loading');
     }
+  }
+
+  // Раз в минуту и только пока в окне есть чем закрыть разрыв: дозаливка
+  // приходит порциями, а дырам, которые так и остались пустыми (связи не
+  // было по-настоящему), незачем гонять период по кругу.
+  function healGaps() {
+    if (!chart || Date.now() > healUntil) return;
+    if (!series.some(hasGap)) { healUntil = 0; return; }
+    if (Date.now() - reloadedAt < 60000) return;
+    loadSeries({ quiet: true }).catch(() => {});
   }
 
   async function poll() {
@@ -1597,7 +1673,14 @@
       if (!chart && live && data.sensors.some(s => s.value !== null)) {
         loadSeries().catch(() => {});
       }
+      // Контроллер вернулся на связь. Замеры за время молчания он копит у
+      // себя и дозаливает следом, поэтому какое-то время перечитываем
+      // период: точки лягут в разрыв и он затянется сам.
+      const online = Boolean(data.device.online);
+      if (online && wasOnline === false) healUntil = Date.now() + 10 * 60000;
+      wasOnline = online;
       appendPoints(data.sensors);
+      healGaps();
       setStatus(data.device.online ? 'online' : 'offline',
                 data.device.online ? 'контроллер на связи' : 'нет данных от контроллера');
     } catch (e) {
